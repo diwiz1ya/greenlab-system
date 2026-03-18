@@ -25,6 +25,75 @@ export function renderHero(counts = {}) {
   `;
 }
 
+export function renderManagerCabinet(stations, counts = {}, syncSummary = {}, currentStation = null) {
+  void stations;
+  void currentStation;
+  const holdCount = Number(counts.hold || 0);
+  const inProgress = Number(counts.washing || 0)
+    + Number(counts.qc || 0)
+    + Number(counts.drying || 0)
+    + Number(counts.ironing || 0)
+    + holdCount;
+  const failed = Number(syncSummary.failed || 0);
+  const pending = Number(syncSummary.pending || 0);
+  const processing = Number(syncSummary.processing || 0);
+  const queueLoad = pending + processing;
+
+  return `
+    <section class="panel stack manager-cabinet-clean">
+      <div class="header-row">
+        <div>
+          <div class="eyebrow">Менеджерский кабинет</div>
+          <h2>Пульт смены</h2>
+        </div>
+        <span class="pill ${failed > 0 ? "error" : "ok"}">${failed > 0 ? `sync errors: ${failed}` : "sync ok"}</span>
+      </div>
+
+      <div class="manager-kpi-row manager-kpi-row-lite">
+        <div class="manager-kpi-card">
+          <span class="muted">Новые</span>
+          <strong>${Number(counts.sorting || 0)}</strong>
+        </div>
+        <div class="manager-kpi-card">
+          <span class="muted">В работе</span>
+          <strong>${inProgress}</strong>
+        </div>
+        <div class="manager-kpi-card">
+          <span class="muted">К выдаче</span>
+          <strong>${Number(counts.ready || 0)}</strong>
+        </div>
+        <div class="manager-kpi-card ${failed > 0 ? "warn" : ""}">
+          <span class="muted">Sync ошибки</span>
+          <strong>${failed}</strong>
+        </div>
+      </div>
+
+      <section class="manager-alert-strip">
+        <article class="manager-alert-card ${holdCount > 0 ? "critical" : "ok"}">
+          <div class="muted">HOLD</div>
+          <strong>${holdCount}</strong>
+        </article>
+        <article class="manager-alert-card ${failed > 0 ? "critical" : "ok"}">
+          <div class="muted">Sync fail</div>
+          <strong>${failed}</strong>
+        </article>
+        <article class="manager-alert-card ${queueLoad > 0 ? "warn" : "ok"}">
+          <div class="muted">Очередь sync</div>
+          <strong>${queueLoad}</strong>
+        </article>
+      </section>
+
+      <div class="manager-sync-inline">
+        <div class="manager-sync-pills">
+          <span class="pill">pending: ${pending}</span>
+          <span class="pill">processing: ${processing}</span>
+          <span class="pill ${failed > 0 ? "error" : "ok"}">failed: ${failed}</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 export function renderStationPicker(stations, compact = false) {
   return `
     <section class="panel">
@@ -57,21 +126,30 @@ export function renderStationPicker(stations, compact = false) {
 export function renderDemoControls() {
   const canReset = state.user.role === "manager";
   return `
-    <section class="panel">
-      <div class="header-row">
-        <div>
-          <div class="eyebrow">Демо-инструменты</div>
-          <h2>Сброс сценария и экспорт лога сканов</h2>
+    <section class="panel manager-tools">
+      <details class="manager-tools-details">
+        <summary>Сервисные инструменты демо</summary>
+        <div class="manager-tools-body">
+          <div class="manager-kpi-card">
+            <span class="muted">Сброс</span>
+            <button class="warn" data-demo-reset ${canReset ? "" : "disabled"}>Сбросить демо-данные</button>
+          </div>
+          <div class="manager-kpi-card">
+            <span class="muted">Экспорт лога</span>
+            <div class="controls-grid">
+              <button class="secondary" data-export-scans="json">JSON</button>
+              <button class="secondary" data-export-scans="csv">CSV</button>
+            </div>
+          </div>
+          <div class="manager-kpi-card">
+            <span class="muted">Экспорт выбранного заказа</span>
+            <div class="controls-grid">
+              <button class="ghost" data-export-order="json" ${state.selectedOrderId ? "" : "disabled"}>JSON</button>
+              <button class="ghost" data-export-order="csv" ${state.selectedOrderId ? "" : "disabled"}>CSV</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="controls-grid">
-        <button class="warn" data-demo-reset ${canReset ? "" : "disabled"}>Сбросить демо-данные</button>
-        <button class="secondary" data-export-scans="json">Экспорт сканов JSON</button>
-        <button class="secondary" data-export-scans="csv">Экспорт сканов CSV</button>
-        <button class="ghost" data-export-order="json" ${state.selectedOrderId ? "" : "disabled"}>Экспорт выбранного заказа JSON</button>
-        <button class="ghost" data-export-order="csv" ${state.selectedOrderId ? "" : "disabled"}>Экспорт выбранного заказа CSV</button>
-      </div>
-      <p class="muted">Сброс доступен только менеджеру. Экспорт включает станцию, сотрудника, результат и время.</p>
+      </details>
     </section>
   `;
 }

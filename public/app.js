@@ -1,13 +1,14 @@
 import { api } from "./api.js";
 import { bindGlobalActions } from "./actions.js";
 import { renderLogin } from "./render/login.js";
-import { renderOrderDetails, renderOverview, renderPickup, renderSorting, renderSyncQueue } from "./render/orders.js";
+import { renderManagerOverviewCompact, renderOrderDetails, renderOverview, renderPickup, renderSorting, renderSyncQueue } from "./render/orders.js";
 import { renderScanScreen, renderSimpleScanModeWithStatus } from "./render/scan.js";
-import { renderDemoControls, renderHero, renderNoAccess, renderSimpleWorkerHome, renderStationPicker } from "./render/stations.js";
+import { renderManagerCabinet, renderNoAccess, renderSimpleWorkerHome, renderStationPicker } from "./render/stations.js";
 import { app, applyRoleDefaults, consumeNotice, getAllowedStations, getLastScanForStation, isManagerRole, isScanStation, resetSession, state, stationLabels } from "./state.js";
 import { escapeHtml } from "./utils.js";
 
 function showLogin(error) {
+  document.body.classList.remove("modal-open");
   renderLogin(renderApp, error);
 }
 
@@ -31,27 +32,50 @@ async function boot() {
   }
 }
 
+async function ensureStations() {
+  if (Array.isArray(state.stations) && state.stations.length) {
+    return state.stations;
+  }
+  const stationsResponse = await api("/api/stations");
+  state.stations = Array.isArray(stationsResponse.stations) ? stationsResponse.stations : [];
+  return state.stations;
+}
+
 async function renderApp() {
   const allowedStations = getAllowedStations();
   const managerView = isManagerRole();
-  const [stationsResponse, overview, syncQueue] = await Promise.all([
-    api("/api/stations"),
-    allowedStations.includes("overview") ? api("/api/overview") : Promise.resolve({ counts: {}, orders: [] }),
-    managerView ? api("/api/sync-queue") : Promise.resolve({ items: [], summary: null })
+  const pickupAllowed = allowedStations.includes("pickup");
+  const stations = await ensureStations();
+  const shouldLoadOverview = allowedStations.includes("overview")
+    && (managerView || (state.screen === "station" && state.currentStation === "overview"));
+  const shouldLoadSyncQueue = managerView;
+  const shouldLoadCurrentStationOrders = !managerView
+    && state.screen === "station"
+    && Boolean(state.currentStation)
+    && state.currentStation !== "overview"
+    && state.currentStation !== "pickup"
+    && allowedStations.includes(state.currentStation);
+  const shouldLoadPickupWorkbench = !managerView
+    && pickupAllowed
+    && state.screen === "station"
+    && state.currentStation === "pickup";
+  const shouldLoadOrderDetails = managerView && Boolean(state.selectedOrderId);
+
+  const [overview, syncQueue, currentStationOrders, pickupWorkbench] = await Promise.all([
+    shouldLoadOverview ? api("/api/overview") : Promise.resolve({ counts: {}, orders: [] }),
+    shouldLoadSyncQueue ? api("/api/sync-queue") : Promise.resolve({ items: [], summary: null }),
+    shouldLoadCurrentStationOrders ? api(`/api/orders?station=${state.currentStation}`) : Promise.resolve(null),
+    shouldLoadPickupWorkbench ? api("/api/pickup/workbench") : Promise.resolve({ orders: [] })
   ]);
 
   const notice = consumeNotice();
   const stationData = {};
-  await Promise.all(
-    stationsResponse.stations
-      .filter((station) => station.allowed && station.key !== "overview")
-      .map(async (station) => {
-        stationData[station.key] = await api(`/api/orders?station=${station.key}`);
-      })
-  );
+  if (shouldLoadCurrentStationOrders && currentStationOrders) {
+    stationData[state.currentStation] = currentStationOrders;
+  }
 
   let orderDetails = null;
-  if (state.selectedOrderId) {
+  if (shouldLoadOrderDetails) {
     try {
       orderDetails = await api(`/api/orders/${state.selectedOrderId}`);
     } catch {
@@ -59,41 +83,30 @@ async function renderApp() {
     }
   }
 
-  let recentScans = [];
-  if (state.screen === "station" && isScanStation(state.currentStation)) {
-    try {
-      const recent = await api(`/api/scans/recent?station=${state.currentStation}&limit=8`);
-      recentScans = recent.rows || [];
-    } catch {
-      recentScans = [];
-    }
-  }
-
-  const canToggleSimple = isManagerRole() && state.screen === "station" && isScanStation(state.currentStation);
-
   const content = renderScreenContent({
-    stations: stationsResponse.stations,
+    stations,
     overview,
     stationData,
+    pickupWorkbench,
     orderDetails,
     syncQueue,
-    notice,
-    recentScans
+    notice
   });
 
   app.innerHTML = `
     <section class="shell">
       <div class="topbar panel">
         <div>
-          <div class="eyebrow">Вы вошли как</div>
-          <strong>${escapeHtml(state.user.displayName)}</strong>
-          <div class="muted">${escapeHtml(state.user.role)}</div>
+          ${
+            isManagerRole()
+              ? `
+                <strong class="manager-topbar-title">Кабинет менеджера</strong>
+                <div class="muted manager-topbar-meta">${escapeHtml(state.user.displayName)}</div>
+              `
+              : `<strong class="station-title">${escapeHtml(stationLabels[state.currentStation] || "Станция")}</strong>`
+          }
         </div>
         <nav>
-          ${isManagerRole() ? '<button class="secondary" id="station-picker-button">Станции</button>' : ""}
-          ${isManagerRole() && state.currentStation ? `<button class="ghost" id="home-station-button">${escapeHtml(stationLabels[state.currentStation])}</button>` : ""}
-          ${!isManagerRole() && state.currentStation ? `<span class="pill">${escapeHtml(stationLabels[state.currentStation])}</span>` : ""}
-          ${canToggleSimple ? `<button class="ghost" id="simple-mode-toggle">Простой режим: ${state.simpleMode ? "ВКЛ" : "ВЫКЛ"}</button>` : ""}
           <button class="ghost" id="logout-button">Выйти</button>
         </nav>
       </div>
@@ -101,14 +114,53 @@ async function renderApp() {
     </section>
   `;
 
+  syncModalBodyClass();
   bindGlobalActions(renderApp, () => showLogin());
 }
 
-function renderScreenContent({ stations, overview, stationData, orderDetails, syncQueue, notice, recentScans }) {
+function syncModalBodyClass() {
+  const hasModal = Boolean(app.querySelector(".sorting-modal, .qc-modal"));
+  document.body.classList.toggle("modal-open", hasModal);
+}
+
+function renderScreenContent({ stations, overview, stationData, pickupWorkbench, orderDetails, syncQueue, notice }) {
   const managerView = isManagerRole();
-  const forceSimpleOperatorView = state.screen === "station" && !managerView && isScanStation(state.currentStation);
-  const simpleScanView = state.screen === "station" && isScanStation(state.currentStation) && (state.simpleMode || forceSimpleOperatorView);
+  const simpleScanView = !managerView
+    && state.screen === "station"
+    && isScanStation(state.currentStation)
+    && state.currentStation !== "pickup"
+    && state.simpleMode;
   const lastScan = getLastScanForStation(state.currentStation);
+  const sortingOrders = stationData.sorting?.orders || [];
+  const actionableSortingOrders = sortingOrders.filter((order) => order.status === "sorting");
+
+  if (actionableSortingOrders.length) {
+    if (!actionableSortingOrders.some((order) => order.id === state.activeSortingOrderId)) {
+      state.activeSortingOrderId = null;
+    }
+    const activeIds = new Set(actionableSortingOrders.map((order) => order.id));
+    for (const key of Object.keys(state.sortingDrafts || {})) {
+      const orderId = Number(key);
+      if (!activeIds.has(orderId)) {
+        delete state.sortingDrafts[key];
+      }
+    }
+    if (state.activeSortingOrderId && !state.sortingDrafts[state.activeSortingOrderId]) {
+      state.sortingDrafts[state.activeSortingOrderId] = {
+        rows: [{ color: "mixed" }]
+      };
+    }
+  } else {
+    state.activeSortingOrderId = null;
+  }
+
+  const readyPickupIds = new Set((pickupWorkbench.orders || []).map((order) => order.id));
+  if (!readyPickupIds.has(state.activePickupOrderId)) {
+    state.activePickupOrderId = null;
+  }
+  if (!readyPickupIds.has(state.pickupVerifiedOrderId)) {
+    state.pickupVerifiedOrderId = null;
+  }
 
   if (state.screen === "station-picker") {
     if (!managerView && state.currentStation) {
@@ -118,12 +170,19 @@ function renderScreenContent({ stations, overview, stationData, orderDetails, sy
       `;
     }
 
+    if (managerView) {
+      return `
+        ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
+        ${renderManagerCabinet(stations, overview.counts, syncQueue.summary, state.currentStation)}
+        ${renderManagerOverviewCompact(overview.orders, 12, state.managerFilter)}
+        ${orderDetails ? renderOrderDetails(orderDetails) : ""}
+        ${renderSyncQueue(syncQueue)}
+      `;
+    }
+
     return `
       ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
-      ${renderHero(overview.counts)}
       ${renderStationPicker(stations)}
-      ${renderDemoControls()}
-      ${renderSyncQueue(syncQueue)}
     `;
   }
 
@@ -132,17 +191,20 @@ function renderScreenContent({ stations, overview, stationData, orderDetails, sy
       ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
       ${renderNoAccess()}
       ${managerView ? renderStationPicker(stations) : ""}
-      ${managerView ? renderDemoControls() : ""}
     `;
   }
 
   if (simpleScanView) {
     return `
       ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
-      ${renderSimpleScanModeWithStatus(state.currentStation, stationData[state.currentStation]?.orders || [], recentScans, lastScan)}
-      ${orderDetails ? renderOrderDetails(orderDetails) : ""}
-      ${managerView ? renderDemoControls() : ""}
-      ${managerView ? renderSyncQueue(syncQueue) : ""}
+      ${renderSimpleScanModeWithStatus(
+        state.currentStation,
+        stationData[state.currentStation]?.orders || [],
+        [],
+        lastScan,
+        state.qcRejectReason,
+        state.qcInspection
+      )}
     `;
   }
 
@@ -150,29 +212,30 @@ function renderScreenContent({ stations, overview, stationData, orderDetails, sy
     return `
       ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
       ${state.currentStation === "overview" ? renderOverview(overview.orders) : ""}
-      ${state.currentStation === "sorting" ? renderSorting(stationData.sorting?.orders || []) : ""}
-      ${state.currentStation === "washing" ? renderScanScreen("washing", stationData.washing?.orders || []) : ""}
-      ${state.currentStation === "qc" ? renderScanScreen("qc", stationData.qc?.orders || []) : ""}
-      ${state.currentStation === "drying" ? renderScanScreen("drying", stationData.drying?.orders || []) : ""}
-      ${state.currentStation === "ironing" ? renderScanScreen("ironing", stationData.ironing?.orders || []) : ""}
-      ${state.currentStation === "pickup" ? renderPickup(stationData.pickup?.orders || []) : ""}
+      ${state.currentStation === "sorting" ? renderSorting(sortingOrders, state.activeSortingOrderId, state.sortingDrafts) : ""}
+      ${state.currentStation === "washing" ? renderScanScreen("washing", stationData.washing?.orders || [], lastScan) : ""}
+      ${state.currentStation === "qc" ? renderScanScreen("qc", stationData.qc?.orders || [], lastScan, state.qcRejectReason, state.qcInspection) : ""}
+      ${state.currentStation === "drying" ? renderScanScreen("drying", stationData.drying?.orders || [], lastScan) : ""}
+      ${state.currentStation === "ironing" ? renderScanScreen("ironing", stationData.ironing?.orders || [], lastScan) : ""}
+      ${state.currentStation === "pickup" ? renderPickup(pickupWorkbench.orders || [], lastScan, state.pickupScanFlash, false) : ""}
+    `;
+  }
+
+  if (managerView) {
+    state.screen = "station-picker";
+    state.currentStation = null;
+
+    return `
+      ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
+      ${renderManagerCabinet(stations, overview.counts, syncQueue.summary, null)}
+      ${renderManagerOverviewCompact(overview.orders, 12, state.managerFilter)}
       ${orderDetails ? renderOrderDetails(orderDetails) : ""}
+      ${renderSyncQueue(syncQueue)}
     `;
   }
 
   return `
     ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
-    ${renderHero(overview.counts)}
-    ${renderStationPicker(stations, true)}
-    ${renderDemoControls()}
-    ${state.currentStation === "overview" ? renderOverview(overview.orders) : ""}
-    ${state.currentStation === "sorting" ? renderSorting(stationData.sorting?.orders || []) : ""}
-    ${state.currentStation === "washing" ? renderScanScreen("washing", stationData.washing?.orders || []) : ""}
-    ${state.currentStation === "qc" ? renderScanScreen("qc", stationData.qc?.orders || []) : ""}
-    ${state.currentStation === "drying" ? renderScanScreen("drying", stationData.drying?.orders || []) : ""}
-    ${state.currentStation === "ironing" ? renderScanScreen("ironing", stationData.ironing?.orders || []) : ""}
-    ${state.currentStation === "pickup" ? renderPickup(stationData.pickup?.orders || []) : ""}
-    ${renderOrderDetails(orderDetails)}
-    ${renderSyncQueue(syncQueue)}
+    ${renderStationPicker(stations)}
   `;
 }

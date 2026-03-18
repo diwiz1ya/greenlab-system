@@ -3,9 +3,21 @@ export const app = document.getElementById("app");
 export const state = {
   token: localStorage.getItem("greenlab-demo-token"),
   user: null,
+  stations: null,
   screen: "login",
   currentStation: null,
   selectedOrderId: null,
+  activeSortingOrderId: null,
+  activePickupOrderId: null,
+  pickupVerifiedOrderId: null,
+  pickupScanFlash: null,
+  submittingScanStation: null,
+  submittingCreateOrderId: null,
+  submittingCompletePickupOrderId: null,
+  qcRejectReason: "stain",
+  qcInspection: null,
+  sortingDrafts: {},
+  managerFilter: "",
   notice: null,
   deniedStation: null,
   simpleMode: localStorage.getItem("greenlab-simple-mode") === "1",
@@ -29,7 +41,7 @@ export const stationDescriptions = {
   qc: "Проверка качества после стирки перед сушкой.",
   drying: "Станция сушки: только сканирование.",
   ironing: "Станция глажки: только сканирование перед выдачей.",
-  pickup: "Проверка готовых корзин и завершение выдачи."
+  pickup: "Подтверждение выдачи. Финальное закрытие — только в CleanCloud."
 };
 
 export function isScanStation(station) {
@@ -79,9 +91,21 @@ export function setSimpleMode(next) {
 export function resetSession() {
   state.token = null;
   state.user = null;
+  state.stations = null;
   state.screen = "login";
   state.currentStation = null;
   state.selectedOrderId = null;
+  state.activeSortingOrderId = null;
+  state.activePickupOrderId = null;
+  state.pickupVerifiedOrderId = null;
+  state.pickupScanFlash = null;
+  state.submittingScanStation = null;
+  state.submittingCreateOrderId = null;
+  state.submittingCompletePickupOrderId = null;
+  state.qcRejectReason = "stain";
+  state.qcInspection = null;
+  state.sortingDrafts = {};
+  state.managerFilter = "";
   state.deniedStation = null;
   state.lastScan = null;
   localStorage.removeItem("greenlab-demo-token");

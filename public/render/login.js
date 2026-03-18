@@ -4,64 +4,47 @@ import { escapeHtml } from "../utils.js";
 
 export function renderLogin(renderApp, error) {
   app.innerHTML = `
-    <section class="shell">
-      <div class="hero login-grid">
-        <div class="stack">
-          <div>
-            <div class="eyebrow">Green Lab / Демо MVP</div>
-            <h1>Операционная система прачечной: роли, корзины, QR-посты и синк с CleanCloud.</h1>
-            <p class="lead">
-              Сотрудники видят только свой рабочий режим: сортировка, скан-пост или выдача.
-              Менеджер получает обзор, очередь синка и журнал событий.
-            </p>
-          </div>
-          <div class="badge-row">
-            <div class="badge"><strong>7</strong><span class="muted">Демо-роли</span></div>
-            <div class="badge"><strong>7</strong><span class="muted">Станции</span></div>
-            <div class="badge"><strong>1</strong><span class="muted">Локальная SQLite БД</span></div>
-          </div>
+    <section class="shell login-shell">
+      <div class="panel login-card stack">
+        <div>
+          <div class="eyebrow">Green Lab</div>
+          <h2>Вход в рабочую систему</h2>
+          <p class="muted">Введите учетные данные сотрудника.</p>
         </div>
-        <div class="panel stack">
-          <div>
-            <div class="eyebrow">Вход</div>
-            <h2>Вход в систему</h2>
+        ${error ? `<div class="notice error">${escapeHtml(error)}</div>` : ""}
+        <label>
+          Логин
+          <input id="login-username" placeholder="manager" value="manager" />
+        </label>
+        <label>
+          Пароль
+          <input id="login-password" type="password" placeholder="demo123" value="demo123" />
+        </label>
+        <button id="login-submit">Войти</button>
+        <details class="login-details">
+          <summary>Демо-учетки</summary>
+          <div class="demo-credentials">
+            ${[
+              ["sorting", "Оператор сортировки"],
+              ["washing", "Оператор стирки"],
+              ["qc", "Оператор контроля качества"],
+              ["drying", "Оператор сушки"],
+              ["ironing", "Оператор глажки"],
+              ["pickup", "Оператор выдачи"],
+              ["manager", "Менеджер"]
+            ]
+              .map(
+                ([username, role]) => `
+                  <div class="credential-row">
+                    <strong>${username}</strong> / <code>demo123</code>
+                    <span class="muted">${role}</span>
+                  </div>
+                `
+              )
+              .join("")}
           </div>
-          ${error ? `<div class="notice error">${escapeHtml(error)}</div>` : ""}
-          <label>
-            Логин
-            <input id="login-username" placeholder="sorting" value="sorting" />
-          </label>
-          <label>
-            Пароль
-            <input id="login-password" type="password" placeholder="demo123" value="demo123" />
-          </label>
-          <button id="login-submit">Войти</button>
-        </div>
+        </details>
       </div>
-
-      <section class="panel">
-        <div class="eyebrow">Демо-учётки</div>
-        <div class="demo-credentials">
-          ${[
-            ["sorting", "Оператор сортировки", "Сортировка + обзор"],
-            ["washing", "Оператор стирки", "Стирка + обзор"],
-            ["qc", "Оператор контроля качества", "QC + обзор"],
-            ["drying", "Оператор сушки", "Сушка + обзор"],
-            ["ironing", "Оператор глажки", "Глажка + обзор"],
-            ["pickup", "Оператор выдачи", "Выдача + обзор"],
-            ["manager", "Менеджер филиала", "Все экраны"]
-          ]
-            .map(
-              ([username, role, access]) => `
-                <div class="credential-row">
-                  <strong>${username}</strong> / <code>demo123</code><br />
-                  <span class="muted">${role} · ${access}</span>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
-      </section>
     </section>
   `;
 
