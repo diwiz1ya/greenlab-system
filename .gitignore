@@ -8,6 +8,9 @@ data/*.sqlite-wal
 *.out.log
 *.err.log
 
+backups/
+data/recovery-snapshots/
+
 .env
 .env.*
 !.env.example

@@ -154,6 +154,27 @@ async function runLocalTests(serverLogs) {
     }
   });
 
+  await run("Health endpoint returns service status", async () => {
+    const health = await apiRequest(baseUrl, "/healthz");
+    if (health.status !== 200) {
+      throw new Error(`Expected 200, got ${health.status}`);
+    }
+    if (!health.data || health.data.ok !== true) {
+      throw new Error("Expected ok=true in /healthz payload");
+    }
+    if (!health.data.syncQueue || typeof health.data.syncQueue !== "object") {
+      throw new Error("Expected syncQueue object in /healthz payload");
+    }
+  });
+
+  await run("Invalid login payload returns 400", async () => {
+    const login = await apiRequest(baseUrl, "/api/login", {
+      method: "POST",
+      body: { username: "manager" }
+    });
+    if (login.status !== 400) throw new Error(`Expected 400, got ${login.status}`);
+  });
+
   let managerToken = "";
   await run("Manager login works", async () => {
     const login = await apiRequest(baseUrl, "/api/login", {
@@ -192,6 +213,45 @@ async function runLocalTests(serverLogs) {
     });
     if (forbiddenReset.status !== 403) {
       throw new Error(`Expected 403 for reset by sorting user, got ${forbiddenReset.status}`);
+    }
+
+    const forbiddenSyncQueue = await apiRequest(baseUrl, "/api/sync-queue", {
+      token: sortingToken
+    });
+    if (forbiddenSyncQueue.status !== 403) {
+      throw new Error(`Expected 403 for sync queue by sorting user, got ${forbiddenSyncQueue.status}`);
+    }
+
+    const managerWashingOrders = await apiRequest(baseUrl, "/api/orders?station=washing", { token: managerToken });
+    const foreignOrderId = managerWashingOrders.data.orders?.[0]?.id;
+    if (!foreignOrderId) throw new Error("Expected at least one washing order for access check");
+
+    const forbiddenOrderDetails = await apiRequest(baseUrl, `/api/orders/${foreignOrderId}`, {
+      token: sortingToken
+    });
+    if (forbiddenOrderDetails.status !== 403) {
+      throw new Error(`Expected 403 for foreign order details by sorting user, got ${forbiddenOrderDetails.status}`);
+    }
+
+    const forbiddenExport = await apiRequest(baseUrl, "/api/export/scans?format=csv", {
+      token: sortingToken
+    });
+    if (forbiddenExport.status !== 403) {
+      throw new Error(`Expected 403 for scan export by sorting user, got ${forbiddenExport.status}`);
+    }
+
+    const forbiddenSecurity = await apiRequest(baseUrl, "/api/security/events", {
+      token: sortingToken
+    });
+    if (forbiddenSecurity.status !== 403) {
+      throw new Error(`Expected 403 for security events by sorting user, got ${forbiddenSecurity.status}`);
+    }
+
+    const invalidOrderId = await apiRequest(baseUrl, "/api/orders/not-a-number", {
+      token: sortingToken
+    });
+    if (invalidOrderId.status !== 400) {
+      throw new Error(`Expected 400 for invalid order id path, got ${invalidOrderId.status}`);
     }
   });
 
@@ -236,8 +296,57 @@ async function runLocalTests(serverLogs) {
       throw new Error(`Wrong station scan should be 409, got ${wrongScan.status}`);
     }
 
-    const stationFlow = ["washing", "qc", "drying", "ironing"];
-    for (const station of stationFlow) {
+    for (const qrCode of qrCodes) {
+      const scan = await apiRequest(baseUrl, "/api/scan", {
+        method: "POST",
+        token: managerToken,
+        body: { station: "washing", qrCode }
+      });
+      if (scan.status !== 200 || !scan.data.ok) {
+        throw new Error(`Scan failed at washing for ${qrCode}: ${scan.status}`);
+      }
+    }
+
+    const rejectedQr = qrCodes[0];
+    const qcReject = await apiRequest(baseUrl, "/api/qc/reject", {
+      method: "POST",
+      token: managerToken,
+      body: { qrCode: rejectedQr, reason: "stain" }
+    });
+    if (qcReject.status !== 200 || !qcReject.data.ok) {
+      throw new Error(`QC reject failed for ${rejectedQr}: ${qcReject.status}`);
+    }
+
+    for (const qrCode of qrCodes.slice(1)) {
+      const scan = await apiRequest(baseUrl, "/api/scan", {
+        method: "POST",
+        token: managerToken,
+        body: { station: "qc", qrCode }
+      });
+      if (scan.status !== 200 || !scan.data.ok) {
+        throw new Error(`Scan failed at qc for ${qrCode}: ${scan.status}`);
+      }
+    }
+
+    const rewashScan = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "washing", qrCode: rejectedQr }
+    });
+    if (rewashScan.status !== 200 || !rewashScan.data.ok) {
+      throw new Error(`Rescan failed at washing for ${rejectedQr}: ${rewashScan.status}`);
+    }
+
+    const qcRescan = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "qc", qrCode: rejectedQr }
+    });
+    if (qcRescan.status !== 200 || !qcRescan.data.ok) {
+      throw new Error(`Rescan failed at qc for ${rejectedQr}: ${qcRescan.status}`);
+    }
+
+    for (const station of ["drying", "ironing"]) {
       for (const qrCode of qrCodes) {
         const scan = await apiRequest(baseUrl, "/api/scan", {
           method: "POST",
@@ -254,15 +363,163 @@ async function runLocalTests(serverLogs) {
     const target = pickupOrders.data.orders.find((order) => order.id === orderId);
     if (!target) throw new Error("Order did not reach pickup station");
 
+    const prematureComplete = await apiRequest(baseUrl, "/api/pickup/complete", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId }
+    });
+    if (prematureComplete.status !== 400) {
+      throw new Error(`Pickup complete must be blocked before scans, got ${prematureComplete.status}`);
+    }
+
+    const invalidComplete = await apiRequest(baseUrl, "/api/pickup/complete", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId: "oops" }
+    });
+    if (invalidComplete.status !== 400) {
+      throw new Error(`Expected 400 for invalid pickup orderId, got ${invalidComplete.status}`);
+    }
+
+    for (const qrCode of qrCodes) {
+      const pickupScan = await apiRequest(baseUrl, "/api/scan", {
+        method: "POST",
+        token: managerToken,
+        body: { station: "pickup", qrCode }
+      });
+      if (pickupScan.status !== 200 || !pickupScan.data.ok) {
+        throw new Error(`Pickup scan failed for ${qrCode}: ${pickupScan.status}`);
+      }
+    }
+
+    const pickupWorkbench = await apiRequest(baseUrl, "/api/pickup/workbench", { token: managerToken });
+    const readyOrder = (pickupWorkbench.data.orders || []).find((order) => order.id === orderId);
+    if (!readyOrder) throw new Error("Order missing in pickup workbench");
+    if (!readyOrder.can_confirm) throw new Error("Order is not confirmable after full pickup scans");
+
     const complete = await apiRequest(baseUrl, "/api/pickup/complete", {
       method: "POST",
       token: managerToken,
       body: { orderId }
     });
-    if (complete.status !== 200 || !complete.data.ok) throw new Error("Pickup complete failed");
-    if (complete.data.order.status !== "overview") {
-      throw new Error(`Expected final status overview, got ${complete.data.order.status}`);
+    if (complete.status !== 200 || !complete.data.ok) throw new Error("Pickup complete failed after full scan");
+    if (complete.data.order.status !== "pickup") {
+      throw new Error(`Expected status pickup after handover confirmation, got ${complete.data.order.status}`);
     }
+    if (complete.data.order.ready_for_pickup !== false) {
+      throw new Error("Expected ready_for_pickup=false after handover confirmation");
+    }
+  });
+
+  await run("QC damage puts order on HOLD and manager can release it", async () => {
+    const reset = await apiRequest(baseUrl, "/api/demo/reset", {
+      method: "POST",
+      token: managerToken,
+      body: {}
+    });
+    if (reset.status !== 200 || !reset.data.ok) throw new Error("Reset failed");
+
+    const sortingOrders = await apiRequest(baseUrl, "/api/orders?station=sorting", { token: managerToken });
+    if (!sortingOrders.data.orders.length) throw new Error("No sorting orders after reset");
+    const targetOrderId = sortingOrders.data.orders[0].id;
+
+    const create = await apiRequest(baseUrl, "/api/sorting/create-baskets", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId: targetOrderId, types: ["White"] }
+    });
+    if (create.status !== 200 || !create.data.ok) throw new Error("Create baskets failed");
+    const qrCode = create.data.order.baskets?.[0]?.qr_code;
+    if (!qrCode) throw new Error("Missing qr_code for created basket");
+
+    const washingScan = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "washing", qrCode }
+    });
+    if (washingScan.status !== 200 || !washingScan.data.ok) {
+      throw new Error(`Scan failed at washing for ${qrCode}: ${washingScan.status}`);
+    }
+
+    const qcReject = await apiRequest(baseUrl, "/api/qc/reject", {
+      method: "POST",
+      token: managerToken,
+      body: { qrCode, reason: "damage" }
+    });
+    if (qcReject.status !== 200 || !qcReject.data.ok) {
+      throw new Error(`QC reject failed for ${qrCode}: ${qcReject.status}`);
+    }
+    if (qcReject.data.order.status !== "hold") {
+      throw new Error(`Expected order status hold, got ${qcReject.data.order.status}`);
+    }
+
+    const blockedScan = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "washing", qrCode }
+    });
+    if (blockedScan.status !== 409) {
+      throw new Error(`Expected 409 while order is in HOLD, got ${blockedScan.status}`);
+    }
+
+    const release = await apiRequest(baseUrl, `/api/orders/${targetOrderId}/release-hold`, {
+      method: "POST",
+      token: managerToken,
+      body: {}
+    });
+    if (release.status !== 200 || !release.data.ok) {
+      throw new Error(`Release HOLD failed: ${release.status}`);
+    }
+    if (release.data.order.status !== "washing") {
+      throw new Error(`Expected status washing after release, got ${release.data.order.status}`);
+    }
+
+    const resumedScan = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "washing", qrCode }
+    });
+    if (resumedScan.status !== 200 || !resumedScan.data.ok) {
+      throw new Error(`Expected scan success after release, got ${resumedScan.status}`);
+    }
+  });
+
+  await run("QC inspect returns basket card before decision", async () => {
+    const reset = await apiRequest(baseUrl, "/api/demo/reset", {
+      method: "POST",
+      token: managerToken,
+      body: {}
+    });
+    if (reset.status !== 200 || !reset.data.ok) throw new Error("Reset failed");
+
+    const sortingOrders = await apiRequest(baseUrl, "/api/orders?station=sorting", { token: managerToken });
+    const targetOrderId = sortingOrders.data.orders?.[0]?.id;
+    if (!targetOrderId) throw new Error("No sorting orders after reset");
+
+    const create = await apiRequest(baseUrl, "/api/sorting/create-baskets", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId: targetOrderId, types: ["Mixed"] }
+    });
+    if (create.status !== 200 || !create.data.ok) throw new Error("Create baskets failed");
+    const qrCode = create.data.order.baskets?.[0]?.qr_code;
+    if (!qrCode) throw new Error("Missing qr_code");
+
+    const wash = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "washing", qrCode }
+    });
+    if (wash.status !== 200 || !wash.data.ok) throw new Error("Washing scan failed");
+
+    const inspect = await apiRequest(baseUrl, "/api/qc/inspect", {
+      method: "POST",
+      token: managerToken,
+      body: { qrCode }
+    });
+    if (inspect.status !== 200 || !inspect.data.ok) throw new Error("QC inspect failed");
+    if (!inspect.data.order || !inspect.data.basket) throw new Error("QC inspect payload missing order/basket");
+    if (inspect.data.basket.qr_code !== qrCode) throw new Error("QC inspect returned different basket");
   });
 
   await run("Scan export returns CSV", async () => {
@@ -294,6 +551,28 @@ async function runLocalTests(serverLogs) {
     }
   });
 
+  await run("Manual sync run validates explicit order id", async () => {
+    const runSync = await apiRequest(baseUrl, "/api/sync/run", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId: "bad" }
+    });
+    if (runSync.status !== 400) {
+      throw new Error(`Expected 400 for invalid sync order id, got ${runSync.status}`);
+    }
+  });
+
+  await run("Retry sync by order validates order id", async () => {
+    const retryInvalid = await apiRequest(baseUrl, "/api/sync/retry-order", {
+      method: "POST",
+      token: managerToken,
+      body: { orderId: 0 }
+    });
+    if (retryInvalid.status !== 400) {
+      throw new Error(`Expected 400 for invalid order id, got ${retryInvalid.status}`);
+    }
+  });
+
   await run("Webhook endpoint deduplicates by event key", async () => {
     const payload = { event_id: "demo-webhook-001", orderID: "CC-DOES-NOT-EXIST", status: "0" };
     const first = await apiRequest(baseUrl, "/api/cleancloud/webhook", {
@@ -320,6 +599,21 @@ async function runLocalTests(serverLogs) {
     if (events.status !== 200) throw new Error(`Expected 200, got ${events.status}`);
     if (!Array.isArray(events.data.rows)) throw new Error("rows is not an array");
     if (events.data.rows.length < 1) throw new Error("No webhook rows returned");
+  });
+
+  await run("Manager can read security events", async () => {
+    const events = await apiRequest(baseUrl, "/api/security/events?limit=10", {
+      method: "GET",
+      token: managerToken
+    });
+    if (events.status !== 200) throw new Error(`Expected 200, got ${events.status}`);
+    if (!Array.isArray(events.data.rows)) throw new Error("rows is not an array");
+    if (events.data.rows.length < 1) throw new Error("No security rows returned");
+
+    const hasAuthEvent = events.data.rows.some((row) =>
+      typeof row.category === "string" && row.category.startsWith("auth.login")
+    );
+    if (!hasAuthEvent) throw new Error("Expected auth.login* event in security log");
   });
 
   await run("Logout invalidates session", async () => {
@@ -435,7 +729,7 @@ async function main() {
   const serverLogs = { stdout: "", stderr: "" };
   const server = spawn(process.execPath, ["server.js"], {
     cwd: rootDir,
-    env: { ...process.env, PORT: String(localPort) },
+    env: { ...process.env, PORT: String(localPort), GREENLAB_PORT: String(localPort) },
     stdio: ["ignore", "pipe", "pipe"]
   });
 
