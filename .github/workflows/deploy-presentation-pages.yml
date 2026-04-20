@@ -1,4 +1,4 @@
-name: Deploy Presentation to GitHub Pages
+name: Deploy Docs to GitHub Pages
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
       - master
     paths:
-      - "presentation/**"
+      - "docs/**"
       - ".github/workflows/deploy-presentation-pages.yml"
   workflow_dispatch:
 
@@ -34,10 +34,10 @@ jobs:
         with:
           enablement: true
 
-      - name: Upload static presentation
+      - name: Upload static docs
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./presentation
+          path: ./docs
 
       - name: Deploy to GitHub Pages
         id: deployment
