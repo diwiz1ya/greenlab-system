@@ -8,7 +8,8 @@ function handleOrderRoutes(req, res, url, ctx) {
     stationLabels,
     getOrderDetails,
     canAccessOrderDetails,
-    listStationOrders
+    listStationOrders,
+    getQcLiveMetrics
   } = ctx;
 
   if (req.method === "GET" && url.pathname.startsWith("/api/orders/")) {
@@ -17,17 +18,17 @@ function handleOrderRoutes(req, res, url, ctx) {
 
     const id = parsePositiveInt(url.pathname.split("/").pop());
     if (!id) {
-      json(res, 400, { error: "Некорректный id заказа" });
+      json(res, 400, { error: "Invalid order id" });
       return true;
     }
 
     const order = getOrderDetails(id);
     if (!order) {
-      json(res, 404, { error: "Заказ не найден" });
+      json(res, 404, { error: "Order not found" });
       return true;
     }
     if (!canAccessOrderDetails(session, order)) {
-      json(res, 403, { error: "Нет доступа к деталям этого заказа" });
+      json(res, 403, { error: "No access to this order details" });
       return true;
     }
 
@@ -41,12 +42,21 @@ function handleOrderRoutes(req, res, url, ctx) {
 
     const station = parseStation(stationLabels, url.searchParams.get("station"));
     if (!station) {
-      json(res, 400, { error: "Неизвестная станция" });
+      json(res, 400, { error: "Unknown station" });
       return true;
     }
     if (!requireStationAccess(session, station, res)) return true;
 
-    json(res, 200, { orders: listStationOrders(station) });
+    const orders = listStationOrders(station);
+    if (station === "qc") {
+      json(res, 200, {
+        orders,
+        metrics: getQcLiveMetrics()
+      });
+      return true;
+    }
+
+    json(res, 200, { orders });
     return true;
   }
 

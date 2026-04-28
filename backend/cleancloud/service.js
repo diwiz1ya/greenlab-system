@@ -49,7 +49,9 @@ function createCleanCloudService(options) {
 
     if (
       normalizedText === "новый заказ" ||
+      normalizedText === "new order" ||
       normalizedText === "в работе" ||
+      normalizedText === "in progress" ||
       normalizedText === "sorting" ||
       normalizedText === "sorted" ||
       normalizedText === "washing" ||
@@ -59,7 +61,7 @@ function createCleanCloudService(options) {
     ) {
       return "0";
     }
-    if (normalizedText === "готов к выдаче" || normalizedText === "pickup") {
+    if (normalizedText === "готов к выдаче" || normalizedText === "ready for pickup" || normalizedText === "pickup") {
       return "1";
     }
     if (allowCompleted && (normalizedText === "завершён" || normalizedText === "завершен" || normalizedText === "overview" || normalizedText === "completed")) {
@@ -71,32 +73,32 @@ function createCleanCloudService(options) {
   function mapCleanCloudStatusToLocalOrderState(statusCode) {
     const code = normalizeStatusCode(statusCode);
     if (code === "0") {
-      return {
-        status: "washing",
-        cleancloudStatus: "В работе",
-        readyForPickup: false
-      };
+        return {
+          status: "washing",
+          cleancloudStatus: "In progress",
+          readyForPickup: false
+        };
     }
     if (code === "1") {
-      return {
-        status: "pickup",
-        cleancloudStatus: "Готов к выдаче",
-        readyForPickup: true
-      };
+        return {
+          status: "pickup",
+          cleancloudStatus: "Ready for pickup",
+          readyForPickup: true
+        };
     }
     if (code === "2") {
-      return {
-        status: "overview",
-        cleancloudStatus: "Завершён",
-        readyForPickup: false
-      };
+        return {
+          status: "overview",
+          cleancloudStatus: "Completed",
+          readyForPickup: false
+        };
     }
     if (code === "4" || code === "5") {
-      return {
-        status: "overview",
-        cleancloudStatus: "Отменён",
-        readyForPickup: false
-      };
+        return {
+          status: "overview",
+          cleancloudStatus: "Cancelled",
+          readyForPickup: false
+        };
     }
     return null;
   }
@@ -211,23 +213,23 @@ function createCleanCloudService(options) {
       WHERE id = ?
     `).get(orderId);
     if (!order) {
-      return { error: "Заказ не найден", status: 404 };
+      return { error: "Order not found", status: 404 };
     }
     if (!apiToken) {
       return { error: "CLEAN_CLOUD_API_TOKEN is not set", status: 400 };
     }
     if (!isLikelyNumericOrderId(order.cleancloud_order_id)) {
-      return { error: "cleancloud_order_id должен быть числовым для getOrders", status: 400 };
+      return { error: "cleancloud_order_id must be numeric for getOrders", status: 400 };
     }
 
     const orderResult = await callCleanCloudGetOrders({ orderID: String(order.cleancloud_order_id) });
     if (!orderResult.ok) {
-      return { error: `Не удалось получить заказ из CleanCloud: ${orderResult.error}`, status: 502 };
+      return { error: `Failed to fetch order from CleanCloud: ${orderResult.error}`, status: 502 };
     }
 
     const cleanCloudOrder = Array.isArray(orderResult.data?.Orders) ? orderResult.data.Orders[0] : null;
     if (!cleanCloudOrder) {
-      return { error: "CleanCloud не вернул заказ по orderID", status: 404 };
+      return { error: "CleanCloud did not return order by orderID", status: 404 };
     }
 
     const customerId = toNullableTrimmedText(cleanCloudOrder.customerID);
@@ -265,12 +267,12 @@ function createCleanCloudService(options) {
     if (weight !== null && weight !== oldWeight) {
       updates.push("order_weight = ?");
       params.push(weight);
-      updatedParts.push(`вес: ${weight} кг`);
+      updatedParts.push(`weight: ${weight} kg`);
     }
     if (customerPhone && customerPhone !== oldPhone) {
       updates.push("customer_phone = ?");
       params.push(customerPhone);
-      updatedParts.push(`телефон: ${customerPhone}`);
+      updatedParts.push(`phone: ${customerPhone}`);
     }
     if (customerEmail && customerEmail !== oldEmail) {
       updates.push("customer_email = ?");
@@ -280,7 +282,7 @@ function createCleanCloudService(options) {
     if (customerName && customerName !== oldName) {
       updates.push("customer_name = ?");
       params.push(customerName);
-      updatedParts.push(`имя: ${customerName}`);
+      updatedParts.push(`name: ${customerName}`);
     }
 
     const timestamp = nowIso();
@@ -295,8 +297,8 @@ function createCleanCloudService(options) {
     }
 
     const updateSummary = updatedParts.length
-      ? `Обновлены данные из CleanCloud: ${updatedParts.join(", ")}.`
-      : "CleanCloud ответил, но новых данных (вес/телефон/email) не было.";
+      ? `Updated from CleanCloud: ${updatedParts.join(", ")}.`
+      : "CleanCloud responded, but no new data (weight/phone/email) was found.";
 
     if (updatedParts.length > 0) {
       db.prepare(`
@@ -326,22 +328,22 @@ function createCleanCloudService(options) {
 
     const lower = text.toLowerCase();
     if (lower.includes("clean_cloud_api_token is not set")) {
-      return "Токен CleanCloud не задан (CLEAN_CLOUD_API_TOKEN).";
+      return "CleanCloud token is missing (CLEAN_CLOUD_API_TOKEN).";
     }
     if (lower.includes("fetch failed")) {
-      return "Нет соединения с CleanCloud (fetch failed).";
+      return "No connection to CleanCloud (fetch failed).";
     }
     if (lower.includes("timed out")) {
-      return "Таймаут запроса к CleanCloud.";
+      return "CleanCloud request timeout.";
     }
     if (lower.includes("unknown status mapping")) {
-      return "Не удалось сопоставить локальный статус со статусом CleanCloud.";
+      return "Failed to map local status to CleanCloud status.";
     }
     if (lower.includes("invalid payload json")) {
-      return "Некорректный payload в очереди sync.";
+      return "Invalid payload in sync queue.";
     }
     if (lower.includes("returned success=false")) {
-      return `CleanCloud отклонил запрос: ${text}`;
+      return `CleanCloud rejected the request: ${text}`;
     }
 
     return text;
@@ -398,7 +400,7 @@ function createCleanCloudService(options) {
 
     if (!totalRows) {
       return {
-        error: `Для заказа #${orderId} в очереди синка записей нет.`,
+      error: `No sync queue records found for order #${orderId}.`,
         status: 404
       };
     }
@@ -414,8 +416,8 @@ function createCleanCloudService(options) {
       orderId,
       retried: failedRows,
       message: failedRows > 0
-        ? `Заказ #${orderId}: в retry отправлено ${failedRows} записей sync.`
-        : `Заказ #${orderId}: failed-записей нет, нечего отправлять в retry.`
+      ? `Order #${orderId}: sent ${failedRows} failed sync records to retry.`
+      : `Order #${orderId}: no failed records to retry.`
     };
   }
 
@@ -444,7 +446,9 @@ function createCleanCloudService(options) {
           continue;
         }
 
-        const statusCode = mapLocalStatusToCleanCloudStatusCode(payload.status);
+        const statusCode = mapLocalStatusToCleanCloudStatusCode(payload.status, {
+          allowCompleted: payload.allowCompleted === true
+        });
         if (!statusCode) {
           markSyncQueueRetry(item.id, item.attempts, "Unknown status mapping");
           continue;
@@ -527,7 +531,7 @@ function createCleanCloudService(options) {
     }
 
     const order = db.prepare(`
-      SELECT id, public_id
+      SELECT id, public_id, status, ready_for_pickup
       FROM orders
       WHERE cleancloud_order_id = ?
     `).get(cleanCloudOrderId);
@@ -536,17 +540,42 @@ function createCleanCloudService(options) {
       return { status: "ignored", message: `No local order mapped to cleancloud_order_id=${cleanCloudOrderId}.` };
     }
 
+    if (localStatus.status === "pickup") {
+      const basketSnapshot = db.prepare(`
+        SELECT
+          COUNT(*) AS total_baskets,
+          SUM(CASE WHEN station = 'pickup' AND status = 'pickup' THEN 1 ELSE 0 END) AS pickup_baskets
+        FROM baskets
+        WHERE order_id = ?
+      `).get(order.id);
+      const totalBaskets = Number(basketSnapshot?.total_baskets || 0);
+      const pickupBaskets = Number(basketSnapshot?.pickup_baskets || 0);
+
+      if (totalBaskets <= 0) {
+        return {
+          status: "ignored",
+          message: `Webhook pickup ignored for ${order.public_id}: local order has no baskets.`
+        };
+      }
+      if (pickupBaskets <= 0 || pickupBaskets < totalBaskets) {
+        return {
+          status: "ignored",
+          message: `Webhook pickup ignored for ${order.public_id}: baskets are not fully on pickup (${pickupBaskets}/${totalBaskets}).`
+        };
+      }
+    }
+
     const timestamp = nowIso();
     db.prepare(`
       UPDATE orders
-      SET status = ?, cleancloud_status = ?, ready_for_pickup = ?, updated_at = ?
+      SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = ?, updated_at = ?
       WHERE id = ?
     `).run(localStatus.status, localStatus.cleancloudStatus, localStatus.readyForPickup ? 1 : 0, timestamp, order.id);
 
     db.prepare(`
       INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
       VALUES (?, NULL, 'overview', 'cleancloud_webhook', 'ok', ?, ?)
-    `).run(order.id, `Webhook обновил статус заказа ${order.public_id}: ${localStatus.cleancloudStatus}.`, timestamp);
+    `).run(order.id, `Webhook updated order ${order.public_id}: ${localStatus.cleancloudStatus}.`, timestamp);
 
     return {
       status: "processed",

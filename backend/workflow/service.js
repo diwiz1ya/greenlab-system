@@ -1,7 +1,15 @@
+const path = require("path");
+const { buildSingleItemCounts, getRemainingItemCounts, itemCountsToJson, normalizeItemCounts, parseBasketItemCounts } = require("./basket-core");
+const { normalizeBasketQrCode } = require("./basket-pool");
+const { normalizePickupLocationQrCode } = require("../pickup/locations");
+const { createReworkWorkflow } = require("./rework-service");
+const { createSortingWorkflow } = require("./sorting-service");
+
 function createWorkflowService(options) {
   const {
     db,
     nowIso,
+    basketUploadsDir,
     getOrderDetails,
     getStationLabel,
     queueSync,
@@ -10,15 +18,101 @@ function createWorkflowService(options) {
     flowIndex,
     holdStation,
     holdCloudStatus,
+    awaitingApprovalStation,
+    awaitingApprovalCloudStatus,
     pickupScanOkMessage,
     qcIssueLabels
   } = options;
+
+  const reworkStation = "rework";
+  const inactiveReworkSourceState = "rework_transferred";
+  const pendingCustomerApprovalStatus = "pending_customer_approval";
+  const approvedWaitingTransferStatus = "approved_waiting_transfer";
+  const declinedWaitingReturnStatus = "declined_waiting_return";
+  const approvedRequestStatus = "approved";
+  const declinedRequestStatus = "declined";
+  const basketItemKeys = ["top", "bottom", "underwear", "socksPairs"];
+  const publicUploadsDir = basketUploadsDir || path.join(__dirname, "../../public/uploads/baskets");
+  const reworkServiceCatalog = {
+    stain_not_removed: { serviceLabel: "Stain removal", extraDays: 1 },
+    spot_treatment: { serviceLabel: "Spot treatment", extraDays: 1 },
+    hand_wash: { serviceLabel: "Hand wash", extraDays: 1 },
+    extra_treatment: { serviceLabel: "Extra treatment", extraDays: 1 }
+  };
+  const customerApprovalStation = awaitingApprovalStation || "customer_approval";
+  const customerApprovalCloudStatus = awaitingApprovalCloudStatus || "Ожидает согласования клиента";
+  const orderProgressFlow = ["washing", "drying", "qc", customerApprovalStation, reworkStation, "ironing", "pickup"];
+  const orderProgressIndex = Object.fromEntries(orderProgressFlow.map((station, index) => [station, index]));
+  const machineStations = new Set(["washing", "drying"]);
+  const machineCodePatterns = {
+    washing: /^W0[1-6]$/,
+    drying: /^D0[1-6]$/
+  };
+  const machineFlowBasketQrPattern = /^QR:BIN-\d{3}$/;
+  const pickupBinQrPattern = /^QR:BIN-\d{3}$/;
+  const pickupLocationQrPattern = /^QR:LOC-[A-Z]\d{2}$/;
+
+  // Normalize any unknown legacy statuses to active so unload keeps working.
+  db.prepare(`
+    UPDATE machine_loads
+    SET status = 'active'
+    WHERE status NOT IN ('active', 'completed', 'cancelled')
+  `).run();
+
+  const { createBaskets, updateSortedBaskets, returnSortedOrderToSorting } = createSortingWorkflow({
+    db,
+    nowIso,
+    publicUploadsDir,
+    getOrderDetails,
+    queueSync,
+    normalizeItemCounts,
+    itemCountsToJson
+  });
+  const {
+    getBasketPayload,
+    getBasketWithOrderByQr,
+    listReworkRequestsByOrder,
+    listPendingReworkRequestsByBasketId,
+    listPendingQcTransferTasks,
+    inspectQcBasket,
+    createReworkRequestFromQc,
+    approveReworkRequest,
+    declineReworkRequest,
+    confirmQcTransferTask,
+    rejectBasketFromQc
+  } = createReworkWorkflow({
+    db,
+    nowIso,
+    publicUploadsDir,
+    getOrderDetails,
+    getStationLabel,
+    refreshOrderStatusFromBaskets,
+    reworkStation,
+    awaitingApprovalStation: customerApprovalStation,
+    inactiveReworkSourceState,
+    pendingCustomerApprovalStatus,
+    approvedWaitingTransferStatus,
+    declinedWaitingReturnStatus,
+    approvedRequestStatus,
+    declinedRequestStatus,
+    basketItemKeys,
+    qcIssueLabels,
+    holdStation,
+    holdCloudStatus,
+    reworkServiceCatalog,
+    parseBasketItemCounts,
+    buildSingleItemCounts,
+    getRemainingItemCounts,
+    itemCountsToJson
+  });
 
   function getOrderProgressFromBaskets(orderId) {
     const rows = db.prepare(`
       SELECT station, COUNT(*) AS count
       FROM baskets
       WHERE order_id = ?
+        AND station = status
+        AND station != 'archived'
       GROUP BY station
     `).all(orderId);
 
@@ -38,173 +132,1051 @@ function createWorkflowService(options) {
       };
     }
 
+    if (rows.some((row) => row.station === customerApprovalStation)) {
+      return {
+        status: customerApprovalStation,
+        cleancloudStatus: customerApprovalCloudStatus,
+        readyForPickup: false
+      };
+    }
+
     let minIndex = Number.POSITIVE_INFINITY;
     for (const row of rows) {
-      const index = flowIndex[row.station];
-      if (index === undefined) {
-        continue;
-      }
+      const index = orderProgressIndex[row.station];
+      if (index === undefined) continue;
       if (index < minIndex) {
         minIndex = index;
       }
     }
 
     if (!Number.isFinite(minIndex)) {
-      minIndex = flowIndex.washing;
+      minIndex = orderProgressIndex.washing;
     }
 
-    const status = productionFlow[minIndex];
-    const readyForPickup = status === "pickup";
+    const status = orderProgressFlow[minIndex];
+    const readyForPickup = false;
 
     return {
       status,
-      cleancloudStatus: readyForPickup ? "Готов к выдаче" : "В работе",
+      cleancloudStatus: status === "pickup" ? "Сборка на выдаче" : "В работе",
       readyForPickup
     };
   }
 
-  function refreshOrderStatusFromBaskets(orderId, cleancloudOrderId, timestamp) {
-    const previous = db.prepare("SELECT ready_for_pickup FROM orders WHERE id = ?").get(orderId);
-    const next = getOrderProgressFromBaskets(orderId);
-
-    db.prepare(`
-      UPDATE orders
-      SET status = ?, cleancloud_status = ?, ready_for_pickup = ?, updated_at = ?
+  function syncPickupAssemblyFlags(orderId, timestamp) {
+    const order = db.prepare(`
+      SELECT id, status, ready_for_pickup
+      FROM orders
       WHERE id = ?
-    `).run(next.status, next.cleancloudStatus, next.readyForPickup ? 1 : 0, timestamp, orderId);
-
-    if (next.readyForPickup && !previous.ready_for_pickup) {
-      queueSync(orderId, "cleancloud.status", {
-        orderId: cleancloudOrderId,
-        status: "Готов к выдаче"
-      });
-    }
-
-    return next;
-  }
-
-  function createBaskets(orderId, types, actor) {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    `).get(orderId);
     if (!order) {
-      return { error: "Заказ не найден", status: 404 };
-    }
-    if (order.status !== "sorting") {
-      return { error: "Заказ не находится на сортировке", status: 400 };
+      return { readyToPlace: false, progress: { totalBaskets: 0, scannedBaskets: 0, complete: false, baskets: [] } };
     }
 
-    const existing = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?").get(orderId).count;
-    if (existing > 0) {
-      return { error: "Корзины уже созданы", status: 400 };
-    }
-
-    const normalizedTypes = Array.isArray(types)
-      ? types
-          .map((type) => String(type || "").trim())
-          .filter(Boolean)
-          .slice(0, 20)
-      : [];
-    if (!normalizedTypes.length) {
-      return { error: "Укажите минимум одну корзину перед запуском сортировки", status: 400 };
-    }
-
-    const timestamp = nowIso();
-    const insertBasket = db.prepare(`
-      INSERT INTO baskets (order_id, basket_code, basket_type, station, status, qr_code, created_at, updated_at)
-      VALUES (?, ?, ?, 'washing', 'washing', ?, ?, ?)
-    `);
-
-    normalizedTypes.forEach((type, index) => {
-      const basketCode = `B-${order.public_id.slice(3)}-${index + 1}`;
-      insertBasket.run(orderId, basketCode, type, `QR:${basketCode}`, timestamp, timestamp);
-    });
-
-    db.prepare(`
-      UPDATE orders
-      SET status = 'sorted', cleancloud_status = 'В работе', ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
-
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'sorting', ?, 'ok', 'Корзины созданы, QR-этикетки подготовлены. Заказ ожидает стирку.', ?)
-    `).run(orderId, actor, timestamp);
-
-    queueSync(orderId, "cleancloud.status", {
-      orderId: order.cleancloud_order_id,
-      status: "В работе"
-    });
-
-    return { ok: true, order: getOrderDetails(orderId) };
-  }
-
-  function normalizeQcIssue(value) {
-    const key = String(value || "").trim().toLowerCase();
-    return qcIssueLabels[key] ? key : "stain";
-  }
-
-  function inspectQcBasket(qrCode) {
-    const basket = db.prepare(`
-      SELECT b.*, o.id AS order_db_id, o.public_id, o.customer_name, o.order_weight, o.customer_phone, o.customer_email, o.cleancloud_status
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-    `).get(qrCode);
-
-    if (!basket) {
-      return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
-    }
-
-    if (basket.status !== basket.station) {
+    if (order.status !== "pickup" || Boolean(order.ready_for_pickup)) {
+      db.prepare(`
+        UPDATE orders
+        SET ready_to_place = 0, updated_at = ?
+        WHERE id = ?
+      `).run(timestamp, orderId);
       return {
-        status: 409,
-        payload: {
-          ok: false,
-          message: "Состояние корзины неконсистентно: status не совпадает со station."
-        }
+        readyToPlace: false,
+        progress: getPickupScanProgress(orderId)
       };
     }
 
-    if (basket.station !== "qc") {
+    const progress = getPickupScanProgress(orderId);
+    const readyToPlace = progress.totalBaskets > 0 && progress.scannedBaskets >= progress.totalBaskets;
+    if (readyToPlace) {
+      releasePickupAssemblyBins(orderId, timestamp);
+    }
+    db.prepare(`
+      UPDATE orders
+      SET ready_to_place = ?, updated_at = ?
+      WHERE id = ?
+    `).run(readyToPlace ? 1 : 0, timestamp, orderId);
+
+    return {
+      readyToPlace,
+      progress
+    };
+  }
+
+  function getPickupInvariantState(orderId) {
+    const order = db.prepare(`
+      SELECT id, public_id, status, ready_to_place, ready_for_pickup
+      FROM orders
+      WHERE id = ?
+      LIMIT 1
+    `).get(orderId);
+    if (!order) {
+      return null;
+    }
+
+    const baskets = db.prepare(`
+      SELECT id, basket_code, qr_code, station, status
+      FROM baskets
+      WHERE order_id = ?
+        AND status != 'archived'
+      ORDER BY id ASC
+    `).all(orderId);
+    const activePlacements = db.prepare(`
+      SELECT slot_index, bin_qr_code, location_qr_code
+      FROM pickup_order_placements
+      WHERE order_id = ?
+        AND released_at IS NULL
+      ORDER BY slot_index ASC, id ASC
+    `).all(orderId);
+    const progress = getPickupScanProgress(orderId);
+
+    return {
+      order,
+      baskets,
+      activePlacements,
+      progress
+    };
+  }
+
+  function validatePickupInvariantState(orderId, options = {}) {
+    const {
+      requirePickupStatus = false,
+      requireReadyToPlace = false,
+      requireReadyForPickup = false
+    } = options;
+
+    const state = getPickupInvariantState(orderId);
+    if (!state) {
+      return { ok: false, error: "Заказ не найден.", status: 404 };
+    }
+
+    const { order, baskets, activePlacements, progress } = state;
+    const hasPickupState = requirePickupStatus
+      || Boolean(order.ready_to_place)
+      || Boolean(order.ready_for_pickup)
+      || activePlacements.length > 0;
+    const inconsistentBaskets = baskets.filter((basket) => basket.station !== basket.status);
+    const basketsOutsidePickup = baskets.filter((basket) => basket.station !== "pickup" || basket.status !== "pickup");
+    const slotKeys = new Set();
+    const binKeys = new Set();
+    const locationKeys = new Set();
+
+    if (!baskets.length) {
       return {
-        status: 409,
-        payload: {
+        ok: false,
+        error: "Заказ не содержит активных корзин для этапа выдачи.",
+        status: 409
+      };
+    }
+
+    if (inconsistentBaskets.length) {
+      return {
+        ok: false,
+        error: "Заказ содержит корзины с неконсистентным состоянием (status != station).",
+        status: 409
+      };
+    }
+
+    if (hasPickupState && order.status !== "pickup") {
+      return {
+        ok: false,
+        error: "Заказ содержит pickup-признаки, но его статус не равен pickup.",
+        status: 409
+      };
+    }
+
+    if ((Boolean(order.ready_to_place) || Boolean(order.ready_for_pickup) || requireReadyToPlace || requireReadyForPickup) && basketsOutsidePickup.length) {
+      return {
+        ok: false,
+        error: "Заказ на выдаче содержит корзины вне станции pickup.",
+        status: 409
+      };
+    }
+
+    if (requireReadyToPlace && !Boolean(order.ready_to_place)) {
+      return {
+        ok: false,
+        error: "Заказ еще не собран полностью. Сначала завершите сборку BIN.",
+        status: 409
+      };
+    }
+
+    if (requireReadyForPickup && !Boolean(order.ready_for_pickup)) {
+      return {
+        ok: false,
+        error: "Заказ не готов к подтверждению выдачи.",
+        status: 409
+      };
+    }
+
+    if (activePlacements.length > 2) {
+      return {
+        ok: false,
+        error: "Заказ содержит слишком много активных размещений на выдаче.",
+        status: 409
+      };
+    }
+
+    for (const placement of activePlacements) {
+      const slotKey = Number(placement.slot_index || 0);
+      const binKey = String(placement.bin_qr_code || "").trim().toUpperCase();
+      const locationKey = String(placement.location_qr_code || "").trim().toUpperCase();
+      if (slotKeys.has(slotKey) || binKeys.has(binKey) || locationKeys.has(locationKey)) {
+        return {
           ok: false,
-          message: `Корзина на станции ${getStationLabel(basket.station)}. Проверка QC доступна только на QC.`
-        }
+          error: "Заказ содержит дублирующее размещение BIN/LOC на выдаче.",
+          status: 409
+        };
+      }
+      slotKeys.add(slotKey);
+      if (binKey) binKeys.add(binKey);
+      if (locationKey) locationKeys.add(locationKey);
+    }
+
+    if (Boolean(order.ready_to_place) && activePlacements.length) {
+      return {
+        ok: false,
+        error: "Заказ помечен как готовый к размещению, но активное размещение уже существует.",
+        status: 409
+      };
+    }
+
+    if (Boolean(order.ready_for_pickup) && !activePlacements.length) {
+      return {
+        ok: false,
+        error: "Заказ помечен как ожидающий выдачи, но размещение BIN/LOC не найдено.",
+        status: 409
+      };
+    }
+
+    if (Boolean(order.ready_for_pickup) && !progress.complete) {
+      return {
+        ok: false,
+        error: "Заказ помечен как ожидающий выдачи, но сборка BIN не завершена.",
+        status: 409
       };
     }
 
     return {
-      status: 200,
-      payload: {
-        ok: true,
-        message: `Корзина ${basket.basket_code} готова к решению QC.`,
-        order: {
-          id: basket.order_db_id,
-          public_id: basket.public_id,
-          customer_name: basket.customer_name,
-          order_weight: basket.order_weight,
-          customer_phone: basket.customer_phone,
-          customer_email: basket.customer_email,
-          cleancloud_status: basket.cleancloud_status
-        },
-        basket: {
-          id: basket.id,
-          basket_code: basket.basket_code,
-          basket_type: basket.basket_type,
-          qr_code: basket.qr_code
-        }
+      ok: true,
+      state
+    };
+  }
+
+  function refreshOrderStatusFromBaskets(orderId, cleancloudOrderId, timestamp) {
+    void cleancloudOrderId;
+    const next = getOrderProgressFromBaskets(orderId);
+
+    if (next.status === "pickup") {
+      db.prepare(`
+        UPDATE orders
+        SET status = ?, cleancloud_status = ?, updated_at = ?
+        WHERE id = ?
+      `).run(next.status, next.cleancloudStatus, timestamp, orderId);
+      const pickupFlags = syncPickupAssemblyFlags(orderId, timestamp);
+      return {
+        ...next,
+        readyToPlace: pickupFlags.readyToPlace
+      };
+    }
+
+    db.prepare(`
+      UPDATE orders
+      SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
+      WHERE id = ?
+    `).run(next.status, next.cleancloudStatus, timestamp, orderId);
+
+    return next;
+  }
+
+  function normalizeMachineCode(value) {
+    let normalized = String(value || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "");
+    normalized = normalized.replace(/^QR[:\-]/, "");
+    normalized = normalized.replace(/^(MACHINE|MACHINECODE|MACHINEQR)[:\-]/, "");
+    normalized = normalized.replace(/[^A-Z0-9]/g, "");
+    return normalized;
+  }
+
+  function getMachineCodeHint(station) {
+    if (station === "washing") return "W01..W06";
+    if (station === "drying") return "D01..D06";
+    return "W01..W06 или D01..D06";
+  }
+
+  function isMachineCodeAllowedForStation(station, machineCode) {
+    const pattern = machineCodePatterns[station];
+    return Boolean(pattern && pattern.test(machineCode));
+  }
+
+  function normalizeMachineFlowBasketQr(value) {
+    let normalized = String(value || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "");
+    if (!normalized) return "";
+    normalized = normalized.replace(/^QR[-]/, "QR:");
+    if (/^BIN-\d{3}$/.test(normalized)) {
+      return `QR:${normalized}`;
+    }
+    return normalized;
+  }
+
+  function normalizeMachineFlowBasketQrList(values, limit = 20) {
+    const source = Array.isArray(values) ? values : [];
+    const unique = [];
+    const seen = new Set();
+    for (const value of source) {
+      const qrCode = normalizeMachineFlowBasketQr(value);
+      if (!qrCode || seen.has(qrCode)) continue;
+      seen.add(qrCode);
+      unique.push(qrCode);
+      if (unique.length >= limit) break;
+    }
+    return unique;
+  }
+
+  function normalizePickupBinQr(value) {
+    let normalized = normalizeBasketQrCode(value);
+    if (!normalized) return "";
+    normalized = normalized.replace(/^QR[-]/, "QR:");
+    if (/^BIN-\d{3}$/.test(normalized)) {
+      normalized = `QR:${normalized}`;
+    }
+    return normalized;
+  }
+
+  function releasePickupAssemblyBins(orderId, timestamp) {
+    const rows = db.prepare(`
+      SELECT id, basket_code, qr_code
+      FROM baskets
+      WHERE order_id = ?
+        AND station = 'pickup'
+        AND status = 'pickup'
+    `).all(orderId);
+    if (!rows.length) return;
+
+    const updateBasketQr = db.prepare(`
+      UPDATE baskets
+      SET qr_code = ?, updated_at = ?
+      WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      const basketCode = String(row.basket_code || "").trim().toUpperCase();
+      if (!basketCode) continue;
+
+      const currentQr = String(row.qr_code || "").trim().toUpperCase();
+      const nextQr = `QR:${basketCode}`;
+      if (currentQr === nextQr) continue;
+      if (!pickupBinQrPattern.test(currentQr)) continue;
+
+      updateBasketQr.run(nextQr, timestamp, row.id);
+    }
+  }
+
+  function normalizePickupLocationQr(value) {
+    let normalized = normalizePickupLocationQrCode(value);
+    if (!normalized) return "";
+    normalized = normalized.replace(/^QR[-]/, "QR:");
+    if (/^LOC-[A-Z]\d{2}$/.test(normalized)) {
+      normalized = `QR:${normalized}`;
+    }
+    return normalized;
+  }
+
+  function getMachineWithActiveLoad(station, machineCode) {
+    return db.prepare(`
+      SELECT
+        m.id,
+        m.machine_code,
+        m.station,
+        m.machine_type,
+        m.display_name,
+        m.is_active,
+        ml.id AS active_load_id,
+        ml.started_at AS active_load_started_at,
+        ml.started_by AS active_load_started_by
+      FROM laundry_machines m
+      LEFT JOIN machine_loads ml
+        ON ml.machine_id = m.id
+       AND ml.status = 'active'
+      WHERE m.station = ?
+        AND m.machine_code = ?
+        AND m.is_active = 1
+      LIMIT 1
+    `).get(station, machineCode);
+  }
+
+  function listMachineWorkbench(station) {
+    if (!machineStations.has(station)) {
+      return { error: "Станция машинного цикла доступна только для стирки и сушки.", status: 400 };
+    }
+
+    const machineRows = db.prepare(`
+      SELECT
+        m.id,
+        m.machine_code,
+        m.station,
+        m.machine_type,
+        m.display_name,
+        ml.id AS active_load_id,
+        ml.status AS active_load_status,
+        ml.started_at AS active_load_started_at,
+        ml.started_by AS active_load_started_by,
+        ml.completed_at AS active_load_completed_at,
+        ml.completed_by AS active_load_completed_by,
+        (
+          SELECT COUNT(*)
+          FROM machine_load_baskets mlb
+          WHERE mlb.load_id = ml.id
+        ) AS active_load_baskets_count,
+        (
+          SELECT COUNT(*)
+          FROM machine_load_baskets mlb
+          WHERE mlb.load_id = ml.id
+            AND mlb.unloaded_at IS NOT NULL
+        ) AS active_load_unloaded_count
+      FROM laundry_machines m
+      LEFT JOIN machine_loads ml
+        ON ml.id = (
+          SELECT ml2.id
+          FROM machine_loads ml2
+          WHERE ml2.machine_id = m.id
+            AND ml2.status = 'active'
+          ORDER BY ml2.created_at DESC, ml2.id DESC
+          LIMIT 1
+        )
+      WHERE m.station = ?
+        AND m.is_active = 1
+      ORDER BY m.machine_code ASC
+    `).all(station);
+
+    const listLoadBaskets = db.prepare(`
+      SELECT
+        b.id,
+        b.basket_code,
+        b.qr_code,
+        b.station,
+        b.status,
+        o.public_id,
+        mlb.unloaded_at,
+        mlb.unloaded_by
+      FROM machine_load_baskets mlb
+      JOIN baskets b ON b.id = mlb.basket_id
+      JOIN orders o ON o.id = b.order_id
+      WHERE mlb.load_id = ?
+      ORDER BY mlb.id ASC
+    `);
+
+    const machines = machineRows.map((row) => {
+      const hasActiveLoad = Number(row.active_load_id || 0) > 0;
+      const loadStatus = String(row.active_load_status || "");
+      const activeLoad = hasActiveLoad
+        ? {
+            id: Number(row.active_load_id),
+            status: loadStatus || "active",
+            started_at: row.active_load_started_at,
+            started_by: row.active_load_started_by,
+            completed_at: row.active_load_completed_at || null,
+            completed_by: row.active_load_completed_by || null,
+            baskets_count: Number(row.active_load_baskets_count || 0),
+            unloaded_baskets_count: Number(row.active_load_unloaded_count || 0),
+            baskets: listLoadBaskets.all(row.active_load_id).map((basket) => ({
+              id: basket.id,
+              basket_code: basket.basket_code,
+              qr_code: basket.qr_code,
+              station: basket.station,
+              status: basket.status,
+              order_public_id: basket.public_id,
+              unloaded_at: basket.unloaded_at || null,
+              unloaded_by: basket.unloaded_by || null
+            }))
+          }
+        : null;
+
+      return {
+        id: row.id,
+        machine_code: row.machine_code,
+        station: row.station,
+        machine_type: row.machine_type,
+        display_name: row.display_name,
+        status: hasActiveLoad ? "busy" : "idle",
+        active_load: activeLoad
+      };
+    });
+
+    return {
+      ok: true,
+      station,
+      machines
+    };
+  }
+
+  function validateMachineLoadBasket(station, basketQrRaw) {
+    if (!machineStations.has(station)) {
+      return { error: "Machine cycle is available only for washing and drying stations.", status: 400 };
+    }
+
+    const basketQr = normalizeMachineFlowBasketQr(basketQrRaw);
+    if (!basketQr) {
+      return { error: "Scan basket QR first.", status: 400 };
+    }
+    if (!machineFlowBasketQrPattern.test(basketQr)) {
+      return {
+        error: `Scan ${basketQr} is not a basket QR. Expected format: QR:BIN-001.`,
+        status: 400
+      };
+    }
+
+    const getBasketByQr = db.prepare(`
+      SELECT
+        b.id,
+        b.order_id,
+        b.basket_code,
+        b.qr_code,
+        b.basket_items_json,
+        b.station,
+        b.status,
+        o.public_id,
+        o.cleancloud_order_id
+      FROM baskets b
+      JOIN orders o ON o.id = b.order_id
+      WHERE b.qr_code = ?
+      LIMIT 1
+    `);
+    const getActiveLoadByBasketId = db.prepare(`
+      SELECT
+        ml.id AS load_id,
+        m.machine_code
+      FROM machine_load_baskets mlb
+      JOIN machine_loads ml
+        ON ml.id = mlb.load_id
+       AND ml.status = 'active'
+      JOIN laundry_machines m ON m.id = ml.machine_id
+      WHERE mlb.basket_id = ?
+        AND mlb.unloaded_at IS NULL
+      LIMIT 1
+    `);
+
+    const basket = getBasketByQr.get(basketQr);
+    if (!basket) {
+      return { error: `QR code ${basketQr} was not found.`, status: 404 };
+    }
+    if (basket.status !== basket.station) {
+      return { error: `Basket ${basket.basket_code} is in an inconsistent state (status != station).`, status: 409 };
+    }
+    if (basket.station !== station) {
+      return {
+        error: `Basket ${basket.basket_code} is at ${getStationLabel(basket.station)}, not ${getStationLabel(station)}.`,
+        status: 409
+      };
+    }
+
+    const itemCounts = parseBasketItemCounts(basket.basket_items_json);
+    const totalItems = Number(itemCounts?.total || 0);
+    if (totalItems <= 0) {
+      return {
+        error: `Basket ${basket.basket_code} is empty. Machine cycle can start only for baskets with items.`,
+        status: 409
+      };
+    }
+
+    const activeLoad = getActiveLoadByBasketId.get(basket.id);
+    if (activeLoad) {
+      return {
+        error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,
+        status: 409
+      };
+    }
+
+    return {
+      ok: true,
+      basket: {
+        id: basket.id,
+        order_id: basket.order_id,
+        public_id: basket.public_id,
+        basket_code: basket.basket_code,
+        qr_code: basket.qr_code,
+        station: basket.station,
+        status: basket.status
       }
     };
   }
 
-  function scanBasket(station, qrCode, actor) {
-    const basket = db.prepare(`
-      SELECT b.*, o.cleancloud_order_id, o.id AS order_db_id
+  function startMachineLoad(station, machineCodeRaw, basketQrsRaw, actor) {
+    if (!machineStations.has(station)) {
+      return { error: "Машинный цикл можно запускать только на стирке или сушке.", status: 400 };
+    }
+
+    const machineCode = normalizeMachineCode(machineCodeRaw);
+    if (!machineCode) {
+      return { error: "Сканируйте QR машины перед запуском цикла.", status: 400 };
+    }
+    if (!isMachineCodeAllowedForStation(station, machineCode)) {
+      return {
+        error: `Для станции ${getStationLabel(station)} разрешены только QR машин ${getMachineCodeHint(station)}.`,
+        status: 400
+      };
+    }
+
+    const basketQrs = normalizeMachineFlowBasketQrList(basketQrsRaw, 30);
+    if (!basketQrs.length) {
+      return { error: "Добавьте корзину в цикл машины.", status: 400 };
+    }
+    if (basketQrs.length > 1) {
+      return { error: "В одном цикле машины может быть только одна корзина.", status: 400 };
+    }
+
+    const machine = getMachineWithActiveLoad(station, machineCode);
+    if (!machine) {
+      return { error: `Машина ${machineCode} не найдена для станции ${getStationLabel(station)}.`, status: 404 };
+    }
+    if (machine.active_load_id) {
+      return { error: `Машина ${machine.display_name} уже занята активным циклом.`, status: 409 };
+    }
+
+    const getBasketByQr = db.prepare(`
+      SELECT
+        b.id,
+        b.order_id,
+        b.basket_code,
+        b.qr_code,
+        b.basket_items_json,
+        b.station,
+        b.status,
+        o.public_id,
+        o.cleancloud_order_id
       FROM baskets b
       JOIN orders o ON o.id = b.order_id
       WHERE b.qr_code = ?
-    `).get(qrCode);
+      LIMIT 1
+    `);
+    const getActiveLoadByBasketId = db.prepare(`
+      SELECT
+        ml.id AS load_id,
+        m.machine_code
+      FROM machine_load_baskets mlb
+      JOIN machine_loads ml
+        ON ml.id = mlb.load_id
+       AND ml.status = 'active'
+      JOIN laundry_machines m ON m.id = ml.machine_id
+      WHERE mlb.basket_id = ?
+        AND mlb.unloaded_at IS NULL
+      LIMIT 1
+    `);
+
+    const baskets = [];
+    for (const qrCode of basketQrs) {
+      if (!machineFlowBasketQrPattern.test(qrCode)) {
+        return {
+          error: `Scan ${qrCode} is not a basket QR. Expected format: QR:BIN-001.`,
+          status: 400
+        };
+      }
+      const basket = getBasketByQr.get(qrCode);
+      if (!basket) {
+        return { error: `QR code ${qrCode} was not found.`, status: 404 };
+      }
+      if (basket.status !== basket.station) {
+        return { error: `Basket ${basket.basket_code} is in an inconsistent state (status != station).`, status: 409 };
+      }
+      if (basket.station !== station) {
+        return {
+          error: `Basket ${basket.basket_code} is at ${getStationLabel(basket.station)}, not ${getStationLabel(station)}.`,
+          status: 409
+        };
+      }
+      const itemCounts = parseBasketItemCounts(basket.basket_items_json);
+      const totalItems = Number(itemCounts?.total || 0);
+      if (totalItems <= 0) {
+        return {
+          error: `Basket ${basket.basket_code} is empty. Machine cycle can start only for baskets with items.`,
+          status: 409
+        };
+      }
+      const activeLoad = getActiveLoadByBasketId.get(basket.id);
+      if (activeLoad) {
+        return {
+          error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,
+          status: 409
+        };
+      }
+      baskets.push(basket);
+    }
+
+    const timestamp = nowIso();
+    const insertLoad = db.prepare(`
+      INSERT INTO machine_loads (
+        machine_id, station, status, started_by, started_at, created_at, updated_at
+      ) VALUES (?, ?, 'active', ?, ?, ?, ?)
+    `);
+    const insertLoadBasket = db.prepare(`
+      INSERT INTO machine_load_baskets (load_id, basket_id, order_id, added_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    const insertScanEvent = db.prepare(`
+      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+      VALUES (?, ?, ?, ?, 'ok', ?, ?)
+    `);
+
+    let loadId = 0;
+    try {
+      db.exec("BEGIN IMMEDIATE;");
+      const loadInsert = insertLoad.run(
+        machine.id,
+        station,
+        actor,
+        timestamp,
+        timestamp,
+        timestamp
+      );
+      loadId = Number(loadInsert.lastInsertRowid);
+      const touchedOrderIds = new Set();
+      for (const basket of baskets) {
+        insertLoadBasket.run(loadId, basket.id, basket.order_id, timestamp);
+        insertScanEvent.run(
+          basket.order_id,
+          basket.id,
+          station,
+          actor,
+          `Корзина помещена в ${machine.display_name} (${machine.machine_code}).`,
+          timestamp
+        );
+        touchedOrderIds.add(Number(basket.order_id));
+      }
+      for (const orderId of touchedOrderIds) {
+        const firstBasketForOrder = baskets.find((basket) => Number(basket.order_id) === orderId);
+        refreshOrderStatusFromBaskets(
+          orderId,
+          firstBasketForOrder?.cleancloud_order_id || null,
+          timestamp
+        );
+      }
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore rollback failure
+      }
+      return { error: error?.message || "Failed to start the machine cycle.", status: 500 };
+    }
+
+    return {
+      ok: true,
+      message: `Cycle started: ${machine.display_name} (${machine.machine_code}), basket ${baskets[0].basket_code}.`,
+      load: {
+        id: loadId,
+        machine_code: machine.machine_code,
+        machine_display_name: machine.display_name,
+        station,
+        status: "active",
+        started_at: timestamp,
+        started_by: actor,
+        baskets: baskets.map((basket) => ({
+          id: basket.id,
+          basket_code: basket.basket_code,
+          qr_code: basket.qr_code,
+          order_public_id: basket.public_id
+        }))
+      }
+    };
+  }
+
+  function unloadBasketFromMachineLoad(loadId, basketQrRaw, actor, options = {}) {
+    const load = db.prepare(`
+      SELECT
+        ml.id,
+        ml.station,
+        ml.status,
+        m.machine_code,
+        m.display_name
+      FROM machine_loads ml
+      JOIN laundry_machines m ON m.id = ml.machine_id
+      WHERE ml.id = ?
+      LIMIT 1
+    `).get(loadId);
+
+    if (!load) {
+      return { error: "Machine cycle not found.", status: 404 };
+    }
+    if (load.status !== "active") {
+      return { error: "This machine cycle is already closed.", status: 409 };
+    }
+    if (options.expectedStation && load.station !== options.expectedStation) {
+      return { error: `Цикл относится к станции ${getStationLabel(load.station)}, а не ${getStationLabel(options.expectedStation)}.`, status: 409 };
+    }
+
+    const basketQr = normalizeMachineFlowBasketQr(basketQrRaw);
+    if (!basketQr) {
+      return { error: "Scan basket QR for unload.", status: 400 };
+    }
+    if (!machineFlowBasketQrPattern.test(basketQr)) {
+      return { error: `Scan ${basketQr} is not a basket QR. Expected format: QR:BIN-001.`, status: 400 };
+    }
+
+    const currentIndex = flowIndex[load.station];
+    if (currentIndex === undefined || currentIndex >= productionFlow.length - 1) {
+      return { error: "This station cannot unload basket to the next step.", status: 400 };
+    }
+    const nextStation = productionFlow[currentIndex + 1];
+
+    const pendingRows = db.prepare(`
+      SELECT
+        mlb.id AS load_basket_id,
+        mlb.unloaded_at,
+        b.id AS basket_id,
+        b.order_id,
+        b.basket_code,
+        b.qr_code,
+        b.station,
+        b.status,
+        o.cleancloud_order_id,
+        o.public_id
+      FROM machine_load_baskets mlb
+      JOIN baskets b ON b.id = mlb.basket_id
+      JOIN orders o ON o.id = b.order_id
+      WHERE mlb.load_id = ?
+        AND mlb.unloaded_at IS NULL
+      ORDER BY mlb.id ASC
+    `).all(loadId);
+
+    if (!pendingRows.length) {
+      return { error: "No baskets left to unload in this machine cycle.", status: 409 };
+    }
+
+    let row = pendingRows.find((entry) => entry.qr_code === basketQr) || null;
+    if (!row && pendingRows.length === 1) {
+      row = pendingRows[0];
+    }
+
+    if (!row) {
+      return { error: `Basket ${basketQr} does not belong to this machine cycle.`, status: 404 };
+    }
+    if (row.unloaded_at) {
+      return { error: `Basket ${row.basket_code} is already unloaded from this cycle.`, status: 409 };
+    }
+    if (row.status !== row.station) {
+      return { error: `Basket ${row.basket_code} is in inconsistent state (status != station).`, status: 409 };
+    }
+    if (row.station !== load.station) {
+      return {
+        error: `Basket ${row.basket_code} is no longer at station ${getStationLabel(load.station)}.`,
+        status: 409
+      };
+    }
+
+    const originalQr = String(row.qr_code || "");
+    const rebindToAnotherBin = basketQr !== originalQr;
+    if (rebindToAnotherBin) {
+      const knownBin = db.prepare(`
+        SELECT qr_code
+        FROM basket_catalog
+        WHERE qr_code = ?
+          AND is_active = 1
+        LIMIT 1
+      `).get(basketQr);
+      if (!knownBin) {
+        return {
+          error: `QR ${basketQr} is not present in BIN catalog BIN-001..BIN-050.`,
+          status: 400
+        };
+      }
+
+      const occupied = db.prepare(`
+        SELECT basket_code
+        FROM baskets
+        WHERE qr_code = ?
+          AND id != ?
+        LIMIT 1
+      `).get(basketQr, row.basket_id);
+      if (occupied?.basket_code) {
+        return {
+          error: `QR ${basketQr} is already occupied by basket ${occupied.basket_code}.`,
+          status: 409
+        };
+      }
+    }
+
+    const timestamp = nowIso();
+    const unloadBasket = db.prepare(`
+      UPDATE machine_load_baskets
+      SET unloaded_at = ?, unloaded_by = ?
+      WHERE id = ?
+    `);
+    const rebindBasketQr = db.prepare(`
+      UPDATE baskets
+      SET qr_code = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    const moveBasket = db.prepare(`
+      UPDATE baskets
+      SET station = ?, status = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    const markCompletedIfEmpty = db.prepare(`
+      UPDATE machine_loads
+      SET status = 'completed', updated_at = ?
+      WHERE id = ?
+        AND status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM machine_load_baskets
+          WHERE load_id = ?
+            AND unloaded_at IS NULL
+        )
+    `);
+    const pendingCountStmt = db.prepare(`
+      SELECT COUNT(*) AS pending_count
+      FROM machine_load_baskets
+      WHERE load_id = ?
+        AND unloaded_at IS NULL
+    `);
+    const insertScanEvent = db.prepare(`
+      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+      VALUES (?, ?, ?, ?, 'ok', ?, ?)
+    `);
+
+    let pendingCount = 0;
+    try {
+      db.exec("BEGIN IMMEDIATE;");
+      if (rebindToAnotherBin) {
+        rebindBasketQr.run(basketQr, timestamp, row.basket_id);
+      }
+      unloadBasket.run(timestamp, actor, row.load_basket_id);
+      moveBasket.run(nextStation, nextStation, timestamp, row.basket_id);
+
+      const unloadMessage = rebindToAnotherBin
+        ? `Basket unloaded from ${load.display_name} (${load.machine_code}), QR changed ${originalQr} -> ${basketQr}, station: ${getStationLabel(nextStation)}.`
+        : `Basket unloaded from ${load.display_name} (${load.machine_code}) and moved to station ${getStationLabel(nextStation)}.`;
+      insertScanEvent.run(
+        row.order_id,
+        row.basket_id,
+        load.station,
+        actor,
+        unloadMessage,
+        timestamp
+      );
+
+      refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
+      markCompletedIfEmpty.run(timestamp, load.id, load.id);
+      pendingCount = Number(pendingCountStmt.get(load.id)?.pending_count || 0);
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore rollback failure
+      }
+      if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
+        return { error: `QR ${basketQr} is already used by another order.`, status: 409 };
+      }
+      return { error: error?.message || "Failed to unload basket from machine cycle.", status: 500 };
+    }
+
+    const nextQrCode = rebindToAnotherBin ? basketQr : originalQr;
+    return {
+      ok: true,
+      message: `Basket ${row.basket_code} unloaded. Remaining to unload: ${pendingCount}.`,
+      load: {
+        id: load.id,
+        machine_code: load.machine_code,
+        machine_display_name: load.display_name,
+        station: load.station,
+        status: pendingCount > 0 ? "active" : "completed",
+        pending_unload_count: pendingCount
+      },
+      basket: {
+        id: row.basket_id,
+        basket_code: row.basket_code,
+        qr_code: nextQrCode,
+        order_public_id: row.public_id,
+        station: nextStation,
+        status: nextStation
+      }
+    };
+  }
+
+  function cancelMachineLoad(loadId, actor, options = {}) {
+    const load = db.prepare(`
+      SELECT
+        ml.id,
+        ml.station,
+        ml.status,
+        m.machine_code,
+        m.display_name
+      FROM machine_loads ml
+      JOIN laundry_machines m ON m.id = ml.machine_id
+      WHERE ml.id = ?
+      LIMIT 1
+    `).get(loadId);
+
+    if (!load) {
+      return { error: "Машинный цикл не найден.", status: 404 };
+    }
+    if (load.status !== "active") {
+      return { error: "Этот машинный цикл уже закрыт.", status: 409 };
+    }
+    if (options.expectedStation && load.station !== options.expectedStation) {
+      return { error: `Цикл относится к станции ${getStationLabel(load.station)}, а не ${getStationLabel(options.expectedStation)}.`, status: 409 };
+    }
+
+    const baskets = db.prepare(`
+      SELECT b.id, b.order_id
+      FROM machine_load_baskets mlb
+      JOIN baskets b ON b.id = mlb.basket_id
+      WHERE mlb.load_id = ?
+    `).all(loadId);
+    const timestamp = nowIso();
+
+    const markCancelled = db.prepare(`
+      UPDATE machine_loads
+      SET status = 'cancelled', cancelled_by = ?, cancelled_at = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    const insertScanEvent = db.prepare(`
+      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+      VALUES (?, ?, ?, ?, 'ok', ?, ?)
+    `);
+
+    try {
+      db.exec("BEGIN IMMEDIATE;");
+      markCancelled.run(actor, timestamp, timestamp, load.id);
+      for (const basket of baskets) {
+        insertScanEvent.run(
+          basket.order_id,
+          basket.id,
+          load.station,
+          actor,
+          `Цикл ${load.display_name} (${load.machine_code}) отменен оператором.`,
+          timestamp
+        );
+      }
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore rollback failure
+      }
+      return { error: error?.message || "Не удалось отменить машинный цикл.", status: 500 };
+    }
+
+    return {
+      ok: true,
+      message: `Цикл отменен: ${load.display_name} (${load.machine_code}).`,
+      load: {
+        id: load.id,
+        status: "cancelled",
+        cancelled_at: timestamp,
+        cancelled_by: actor
+      }
+    };
+  }
+
+  function scanBasket(station, qrCode, actor, options = {}) {
+    const basket = getBasketWithOrderByQr(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
@@ -212,6 +1184,36 @@ function createWorkflowService(options) {
 
     const timestamp = nowIso();
     const orderId = basket.order_db_id;
+    const expectedOrderId = Number(options.expectedOrderId || 0);
+    const strictExpectedOrder = Boolean(options.strictExpectedOrder);
+
+    if (
+      station === "pickup"
+      && strictExpectedOrder
+      && Number.isFinite(expectedOrderId)
+      && expectedOrderId > 0
+      && expectedOrderId !== orderId
+    ) {
+      const expectedOrder = db.prepare("SELECT public_id FROM orders WHERE id = ?").get(expectedOrderId);
+      const expectedOrderPublicId = String(expectedOrder?.public_id || "").trim();
+      const actualOrderPublicId = String(basket.public_id || "").trim();
+      const mismatchMessage = expectedOrderPublicId
+        ? `Скан относится к ${actualOrderPublicId || "другому заказу"}, а выбран ${expectedOrderPublicId}. Завершите выбранный заказ или переключите его в выдаче.`
+        : "Скан относится к другому заказу. Сначала переключите выбранный заказ в выдаче.";
+
+      db.prepare(`
+        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+        VALUES (?, ?, ?, ?, 'error', ?, ?)
+      `).run(orderId, basket.id, station, actor, mismatchMessage, timestamp);
+
+      return {
+        status: 409,
+        payload: {
+          ok: false,
+          message: mismatchMessage
+        }
+      };
+    }
 
     if (basket.status !== basket.station) {
       db.prepare(`
@@ -235,6 +1237,31 @@ function createWorkflowService(options) {
       };
     }
 
+    if (station === "qc" && basket.basket_kind !== "rework") {
+      const pendingRequests = listPendingReworkRequestsByBasketId(basket.id);
+      if (pendingRequests.length) {
+        db.prepare(`
+          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+          VALUES (?, ?, ?, ?, 'error', ?, ?)
+        `).run(
+          orderId,
+          basket.id,
+          station,
+          actor,
+          "QC не завершен: есть незавершенный кейс доработки по этой корзине.",
+          timestamp
+        );
+
+        return {
+          status: 409,
+          payload: {
+            ok: false,
+            message: "QC нельзя завершить: по этой корзине есть незавершённый кейс доработки."
+          }
+        };
+      }
+    }
+
     if (basket.station !== station) {
       db.prepare(`
         INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
@@ -248,25 +1275,184 @@ function createWorkflowService(options) {
     }
 
     if (station === "pickup") {
+      // Pickup assembly is allowed to start as baskets arrive one by one, even when
+      // the overall order status still reflects an earlier station. Hard pickup
+      // status is enforced later for placement and handover confirmation.
+      const pickupInvariant = validatePickupInvariantState(orderId);
+      if (!pickupInvariant.ok) {
+        db.prepare(`
+          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+          VALUES (?, ?, ?, ?, 'error', ?, ?)
+        `).run(orderId, basket.id, station, actor, pickupInvariant.error, timestamp);
+
+        return {
+          status: pickupInvariant.status,
+          payload: {
+            ok: false,
+            message: pickupInvariant.error
+          }
+        };
+      }
+
+      const pickupOrder = db.prepare(`
+        SELECT status, ready_to_place, ready_for_pickup
+        FROM orders
+        WHERE id = ?
+      `).get(orderId);
+      const handoverConfirmed = db.prepare(`
+        SELECT 1 AS ok
+        FROM scan_events
+        WHERE order_id = ?
+          AND station = 'pickup'
+          AND result = 'ok'
+          AND message LIKE 'Выдача подтверждена.%'
+        LIMIT 1
+      `).get(orderId);
+      if (!pickupOrder || handoverConfirmed) {
+        const blockedMessage = "Выдача по заказу уже подтверждена. Обновите экран.";
+        db.prepare(`
+          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+          VALUES (?, ?, ?, ?, 'error', ?, ?)
+        `).run(orderId, basket.id, station, actor, blockedMessage, timestamp);
+
+        return {
+          status: 409,
+          payload: {
+            ok: false,
+            message: blockedMessage
+          }
+        };
+      }
+      if (Boolean(pickupOrder.ready_for_pickup)) {
+        const blockedMessage = "Заказ уже размещен и ожидает выдачи.";
+        db.prepare(`
+          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+          VALUES (?, ?, ?, ?, 'error', ?, ?)
+        `).run(orderId, basket.id, station, actor, blockedMessage, timestamp);
+        return {
+          status: 409,
+          payload: {
+            ok: false,
+            message: blockedMessage
+          }
+        };
+      }
+
+      const alreadyScanned = db.prepare(`
+        SELECT 1 AS ok
+        FROM scan_events
+        WHERE order_id = ?
+          AND basket_id = ?
+          AND station = 'pickup'
+          AND result = 'ok'
+        LIMIT 1
+      `).get(orderId, basket.id);
+      if (alreadyScanned) {
+        const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
+        const pickupProgress = pickupSync.progress;
+        const message = pickupSync.readyToPlace
+          ? "Эта корзина уже принята. Заказ готов к размещению."
+          : `Эта корзина уже принята. Сборка: ${pickupProgress.scannedBaskets}/${pickupProgress.totalBaskets}.`;
+
+        return {
+          status: 200,
+          payload: {
+            ok: true,
+            message,
+            order: getOrderDetails(orderId),
+            basket: {
+              id: basket.id,
+              basket_code: basket.basket_code,
+              qr_code: basket.qr_code
+            },
+            pickupProgress,
+            readyToPlace: pickupSync.readyToPlace
+          }
+        };
+      }
+
       db.prepare(`
         INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
         VALUES (?, ?, ?, ?, 'ok', ?, ?)
-      `).run(orderId, basket.id, station, actor, pickupScanOkMessage, timestamp);
+      `).run(orderId, basket.id, station, actor, "BIN принят в сборку заказа на выдачу.", timestamp);
 
-      const pickupProgress = getPickupScanProgress(orderId);
+      const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
+      const pickupProgress = pickupSync.progress;
+      const message = pickupSync.readyToPlace
+        ? "Комплект собран. Перейдите в режим «Размещение»."
+        : `Принято в сборку: ${pickupProgress.scannedBaskets}/${pickupProgress.totalBaskets}.`;
 
       return {
         status: 200,
         payload: {
           ok: true,
-          message: "Корзина подтверждена. Подтвердите выдачу в системе, закрытие выполняется в CleanCloud.",
+          message,
           order: getOrderDetails(orderId),
           basket: {
             id: basket.id,
             basket_code: basket.basket_code,
             qr_code: basket.qr_code
           },
-          pickupProgress
+          pickupProgress,
+          readyToPlace: pickupSync.readyToPlace
+        }
+      };
+    }
+
+    if (station === reworkStation) {
+      db.prepare(`
+        UPDATE baskets
+        SET station = 'qc', status = 'qc', updated_at = ?
+        WHERE id = ?
+      `).run(timestamp, basket.id);
+
+      refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
+
+      db.prepare(`
+        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+        VALUES (?, ?, ?, ?, 'ok', ?, ?)
+      `).run(
+        orderId,
+        basket.id,
+        station,
+        actor,
+        `Корзина доработана и возвращена на станцию ${getStationLabel("qc")}.`,
+        timestamp
+      );
+
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          message: `Корзина доработана и возвращена на станцию ${getStationLabel("qc")}.`,
+          order: getOrderDetails(orderId),
+          basket: getBasketPayload({
+            ...basket,
+            station: "qc",
+            status: "qc"
+          })
+        }
+      };
+    }
+
+    if (station === "sorting") {
+      db.prepare(`
+        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+        VALUES (?, ?, ?, ?, 'error', ?, ?)
+      `).run(
+        orderId,
+        basket.id,
+        station,
+        actor,
+        "На сортировке QR-скан не используется. Откройте заказ и запустите сортировку из модалки.",
+        timestamp
+      );
+
+      return {
+        status: 400,
+        payload: {
+          ok: false,
+          message: "На сортировке QR не сканируется. Откройте заказ и нажмите «Запустить сортировку»."
         }
       };
     }
@@ -288,148 +1474,19 @@ function createWorkflowService(options) {
     db.prepare(`
       INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
       VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `).run(orderId, basket.id, station, actor, `Корзина переведена на станцию ${getStationLabel(nextStation)}.`, timestamp);
+    `).run(orderId, basket.id, station, actor, `Basket moved to ${getStationLabel(nextStation)} station.`, timestamp);
 
     return {
       status: 200,
       payload: {
         ok: true,
-        message: `Корзина переведена на станцию ${getStationLabel(nextStation)}.`,
-        order: getOrderDetails(orderId)
-      }
-    };
-  }
-
-  function rejectBasketFromQc(qrCode, actor, issueCode) {
-    const basket = db.prepare(`
-      SELECT b.*, o.cleancloud_order_id, o.id AS order_db_id
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-    `).get(qrCode);
-
-    if (!basket) {
-      return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
-    }
-
-    const issue = normalizeQcIssue(issueCode);
-    const issueLabel = qcIssueLabels[issue];
-    const timestamp = nowIso();
-    const orderId = basket.order_db_id;
-
-    if (basket.status !== basket.station) {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-      `).run(
-        orderId,
-        basket.id,
-        actor,
-        "QC-возврат отклонён: неконсистентное состояние корзины (status != station).",
-        timestamp
-      );
-
-      return {
-        status: 409,
-        payload: {
-          ok: false,
-          message: "QC-операция отклонена: состояние корзины неконсистентно (status != station)."
-        }
-      };
-    }
-
-    if (basket.station !== "qc") {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-      `).run(
-        orderId,
-        basket.id,
-        actor,
-        `QC-возврат отклонён: корзина находится на станции ${getStationLabel(basket.station)}.`,
-        timestamp
-      );
-
-      return {
-        status: 409,
-        payload: {
-          ok: false,
-          message: `Корзина на станции ${getStationLabel(basket.station)}. QC-возврат доступен только на QC.`
-        }
-      };
-    }
-
-    if (issue === "damage") {
-      db.prepare(`
-        UPDATE baskets
-        SET station = ?, status = ?, updated_at = ?
-        WHERE order_id = ?
-      `).run(holdStation, holdStation, timestamp, orderId);
-
-      db.prepare(`
-        UPDATE orders
-        SET status = ?, cleancloud_status = ?, ready_for_pickup = 0, updated_at = ?
-        WHERE id = ?
-      `).run(holdStation, holdCloudStatus, timestamp, orderId);
-
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-      `).run(
-        orderId,
-        basket.id,
-        actor,
-        `QC: обнаружена проблема (${issueLabel}). Заказ переведён в HOLD, требуется решение менеджера.`,
-        timestamp
-      );
-
-      return {
-        status: 200,
-        payload: {
-          ok: true,
-          message: `QC: ${issueLabel}. Заказ переведён в HOLD, требуется менеджер.`,
-          issue: { code: issue, label: issueLabel },
-          order: getOrderDetails(orderId),
-          basket: {
-            id: basket.id,
-            basket_code: basket.basket_code,
-            qr_code: basket.qr_code
-          }
-        }
-      };
-    }
-
-    db.prepare(`
-      UPDATE baskets
-      SET station = 'washing', status = 'washing', updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, basket.id);
-
-    refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
-
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-    `).run(
-      orderId,
-      basket.id,
-      actor,
-      `QC: обнаружена проблема (${issueLabel}). Корзина возвращена на стирку.`,
-      timestamp
-    );
-
-    return {
-      status: 200,
-      payload: {
-        ok: true,
-        message: `QC: ${issueLabel}. Корзина возвращена на стирку.`,
-        issue: { code: issue, label: issueLabel },
+        message: `Basket moved to ${getStationLabel(nextStation)} station.`,
         order: getOrderDetails(orderId),
-        basket: {
-          id: basket.id,
-          basket_code: basket.basket_code,
-          qr_code: basket.qr_code
-        }
+        basket: getBasketPayload({
+          ...basket,
+          station: nextStation,
+          status: nextStation
+        })
       }
     };
   }
@@ -457,11 +1514,13 @@ function createWorkflowService(options) {
       UPDATE baskets
       SET station = 'washing', status = 'washing', updated_at = ?
       WHERE order_id = ?
-    `).run(timestamp, orderId);
+        AND station = ?
+        AND status = ?
+    `).run(timestamp, orderId, holdStation, holdStation);
 
     db.prepare(`
       UPDATE orders
-      SET status = 'washing', cleancloud_status = 'В работе', ready_for_pickup = 0, updated_at = ?
+      SET status = 'washing', cleancloud_status = 'В работе', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
       WHERE id = ?
     `).run(timestamp, orderId);
 
@@ -478,6 +1537,230 @@ function createWorkflowService(options) {
     return { ok: true, order: getOrderDetails(orderId) };
   }
 
+  function placeOrderForPickup(orderId, containerCountRaw, placementsRaw, actor) {
+    const order = db.prepare(`
+      SELECT id, public_id, cleancloud_order_id, status, ready_to_place, ready_for_pickup
+      FROM orders
+      WHERE id = ?
+      LIMIT 1
+    `).get(orderId);
+    if (!order) {
+      return { error: "Заказ не найден", status: 404 };
+    }
+    if (order.status !== "pickup") {
+      return { error: "Заказ еще не дошел до этапа выдачи.", status: 409 };
+    }
+    if (Boolean(order.ready_for_pickup)) {
+      return { error: "Заказ уже размещен и ожидает выдачи.", status: 409 };
+    }
+    if (!Boolean(order.ready_to_place)) {
+      return { error: "Заказ еще не собран полностью. Сначала завершите сборку BIN.", status: 409 };
+    }
+
+    const pickupInvariant = validatePickupInvariantState(orderId, {
+      requirePickupStatus: true,
+      requireReadyToPlace: true
+    });
+    if (!pickupInvariant.ok) {
+      return { error: pickupInvariant.error, status: pickupInvariant.status };
+    }
+
+    releasePickupAssemblyBins(orderId, nowIso());
+
+    const containerCount = Number(containerCountRaw);
+    if (!Number.isInteger(containerCount) || (containerCount !== 1 && containerCount !== 2)) {
+      return { error: "Количество корзин должно быть 1 или 2.", status: 400 };
+    }
+
+    const sourcePlacements = Array.isArray(placementsRaw) ? placementsRaw : [];
+    const placements = sourcePlacements.slice(0, 2).map((entry, index) => {
+      const binQrCode = normalizePickupBinQr(entry?.binQr || entry?.bin_qr || "");
+      const locationQrCode = normalizePickupLocationQr(entry?.locationQr || entry?.location_qr || "");
+      return {
+        slotIndex: index + 1,
+        binQrCode,
+        locationQrCode
+      };
+    });
+
+    if (placements.length !== containerCount) {
+      return { error: "Количество строк размещения не совпадает с количеством корзин.", status: 400 };
+    }
+
+    const usedBins = new Set();
+    const usedLocations = new Set();
+    for (const placement of placements) {
+      if (!placement.binQrCode) {
+        return { error: `Отсканируйте BIN для корзины ${placement.slotIndex}.`, status: 400 };
+      }
+      if (!pickupBinQrPattern.test(placement.binQrCode)) {
+        return {
+          error: `Некорректный BIN в строке ${placement.slotIndex}. Ожидается QR:BIN-001.`,
+          status: 400
+        };
+      }
+      if (!placement.locationQrCode) {
+        return { error: `Отсканируйте LOC для корзины ${placement.slotIndex}.`, status: 400 };
+      }
+      if (!pickupLocationQrPattern.test(placement.locationQrCode)) {
+        return {
+          error: `Некорректный LOC в строке ${placement.slotIndex}. Ожидается QR:LOC-A01.`,
+          status: 400
+        };
+      }
+      if (usedBins.has(placement.binQrCode)) {
+        return { error: `Корзина ${placement.binQrCode} уже добавлена в этом размещении.`, status: 409 };
+      }
+      if (usedLocations.has(placement.locationQrCode)) {
+        return { error: `Ячейка ${placement.locationQrCode} уже добавлена в этом размещении.`, status: 409 };
+      }
+      usedBins.add(placement.binQrCode);
+      usedLocations.add(placement.locationQrCode);
+    }
+
+    const findBinCatalogEntry = db.prepare(`
+      SELECT id, label
+      FROM basket_catalog
+      WHERE qr_code = ?
+        AND is_active = 1
+      LIMIT 1
+    `);
+    const findLocationCatalogEntry = db.prepare(`
+      SELECT id, label
+      FROM pickup_locations
+      WHERE qr_code = ?
+        AND is_active = 1
+      LIMIT 1
+    `);
+    const findActivePlacementByBin = db.prepare(`
+      SELECT p.order_id, o.public_id
+      FROM pickup_order_placements p
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.bin_qr_code = ?
+        AND p.released_at IS NULL
+      LIMIT 1
+    `);
+    const findActivePlacementByLocation = db.prepare(`
+      SELECT p.order_id, o.public_id
+      FROM pickup_order_placements p
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.location_qr_code = ?
+        AND p.released_at IS NULL
+      LIMIT 1
+    `);
+    const findActiveBasketByQr = db.prepare(`
+      SELECT b.id, b.station, o.public_id
+      FROM baskets b
+      JOIN orders o ON o.id = b.order_id
+      WHERE b.qr_code = ?
+        AND b.status != 'archived'
+        AND NOT (
+          o.status = 'pickup'
+          AND (
+            COALESCE(o.ready_to_place, 0) = 1
+            OR COALESCE(o.ready_for_pickup, 0) = 1
+          )
+        )
+      LIMIT 1
+    `);
+
+    for (const placement of placements) {
+      const catalogBin = findBinCatalogEntry.get(placement.binQrCode);
+      if (!catalogBin) {
+        return { error: `BIN ${placement.binQrCode} отсутствует в пуле пустых корзин.`, status: 400 };
+      }
+      const basketInUse = findActiveBasketByQr.get(placement.binQrCode);
+      if (basketInUse) {
+        return {
+          error: `BIN ${placement.binQrCode} занят заказом ${basketInUse.public_id} (${getStationLabel(basketInUse.station)}).`,
+          status: 409
+        };
+      }
+      const activeBinPlacement = findActivePlacementByBin.get(placement.binQrCode);
+      if (activeBinPlacement) {
+        return {
+          error: `BIN ${placement.binQrCode} уже закреплен за заказом ${activeBinPlacement.public_id}.`,
+          status: 409
+        };
+      }
+
+      const catalogLocation = findLocationCatalogEntry.get(placement.locationQrCode);
+      if (!catalogLocation) {
+        return { error: `LOC ${placement.locationQrCode} не найдена в каталоге.`, status: 400 };
+      }
+      const activeLocationPlacement = findActivePlacementByLocation.get(placement.locationQrCode);
+      if (activeLocationPlacement) {
+        return {
+          error: `LOC ${placement.locationQrCode} уже занята заказом ${activeLocationPlacement.public_id}.`,
+          status: 409
+        };
+      }
+    }
+
+    const timestamp = nowIso();
+    const releaseOrderPlacements = db.prepare(`
+      UPDATE pickup_order_placements
+      SET released_at = ?, released_by = ?, updated_at = ?
+      WHERE order_id = ?
+        AND released_at IS NULL
+    `);
+    const insertOrderPlacement = db.prepare(`
+      INSERT INTO pickup_order_placements (
+        order_id, slot_index, bin_qr_code, location_qr_code, placed_by, placed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const updateOrderPlacedState = db.prepare(`
+      UPDATE orders
+      SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = ?
+      WHERE id = ?
+    `);
+    const insertScanEvent = db.prepare(`
+      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+      VALUES (?, NULL, 'pickup', ?, 'ok', ?, ?)
+    `);
+
+    try {
+      db.exec("BEGIN IMMEDIATE;");
+      releaseOrderPlacements.run(timestamp, actor, timestamp, orderId);
+      for (const placement of placements) {
+        insertOrderPlacement.run(
+          orderId,
+          placement.slotIndex,
+          placement.binQrCode,
+          placement.locationQrCode,
+          actor,
+          timestamp,
+          timestamp,
+          timestamp
+        );
+      }
+      updateOrderPlacedState.run(timestamp, orderId);
+      const placementSummary = placements
+        .map((placement) => `${placement.binQrCode} -> ${placement.locationQrCode}`)
+        .join("; ");
+      insertScanEvent.run(orderId, actor, `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore rollback failure
+      }
+      return { error: error?.message || "Не удалось закрепить заказ за ячейкой выдачи.", status: 500 };
+    }
+
+    return {
+      ok: true,
+      message: "Размещение сохранено: BIN и LOC закреплены за заказом.",
+      order: getOrderDetails(orderId),
+      placements: placements.map((placement) => ({
+        slot_index: placement.slotIndex,
+        bin_qr_code: placement.binQrCode,
+        location_qr_code: placement.locationQrCode
+      }))
+    };
+  }
+
   function completePickup(orderId, actor) {
     const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
     if (!order) {
@@ -485,6 +1768,13 @@ function createWorkflowService(options) {
     }
     if (order.status !== "pickup" || !order.ready_for_pickup) {
       return { error: "Заказ не готов к подтверждению выдачи", status: 400 };
+    }
+    const pickupInvariant = validatePickupInvariantState(orderId, {
+      requirePickupStatus: true,
+      requireReadyForPickup: true
+    });
+    if (!pickupInvariant.ok) {
+      return { error: pickupInvariant.error, status: pickupInvariant.status };
     }
     const progress = getPickupScanProgress(orderId);
     if (!progress.complete) {
@@ -495,26 +1785,91 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    db.prepare(`
-      UPDATE orders
-      SET status = 'pickup', cleancloud_status = 'Выдано (ожидает закрытия в CleanCloud)', ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
+    const orderBaskets = db.prepare(`
+      SELECT id, qr_code
+      FROM baskets
+      WHERE order_id = ?
+      ORDER BY id ASC
+    `).all(orderId);
 
-    db.prepare(`
+    const updateOrderAfterPickup = db.prepare(`
+      UPDATE orders
+      SET status = 'pickup', cleancloud_status = 'Выдано', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
+      WHERE id = ?
+    `);
+    const archiveBasket = db.prepare(`
+      UPDATE baskets
+      SET qr_code = ?, station = 'archived', status = 'archived', updated_at = ?
+      WHERE id = ?
+    `);
+    const insertScanEvent = db.prepare(`
       INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'pickup', ?, 'ok', 'Выдача подтверждена. Закройте заказ в CleanCloud менеджером.', ?)
-    `).run(orderId, actor, timestamp);
+      VALUES (?, NULL, 'pickup', ?, 'ok', ?, ?)
+    `);
+    const releasePlacements = db.prepare(`
+      UPDATE pickup_order_placements
+      SET released_at = ?, released_by = ?, updated_at = ?
+      WHERE order_id = ?
+        AND released_at IS NULL
+    `);
+
+    try {
+      db.exec("BEGIN IMMEDIATE;");
+      updateOrderAfterPickup.run(timestamp, orderId);
+      releasePlacements.run(timestamp, actor, timestamp, orderId);
+      insertScanEvent.run(orderId, actor, "Выдача подтверждена менеджером.", timestamp);
+
+      for (const basket of orderBaskets) {
+        const archivedQrCode = `ARCHIVED:${basket.id}:${timestamp}`;
+        archiveBasket.run(archivedQrCode, timestamp, basket.id);
+      }
+
+      if (orderBaskets.length > 0) {
+        insertScanEvent.run(
+          orderId,
+          actor,
+          `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`,
+          timestamp
+        );
+      }
+      queueSync(orderId, "cleancloud.status", {
+        orderId: order.cleancloud_order_id,
+        status: "Завершён",
+        allowCompleted: true
+      });
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK;");
+      } catch {
+        // ignore rollback failure
+      }
+      return { error: error?.message || "Не удалось подтвердить выдачу.", status: 500 };
+    }
 
     return { ok: true, order: getOrderDetails(orderId) };
   }
 
   return {
     createBaskets,
+    updateSortedBaskets,
+    returnSortedOrderToSorting,
+    listMachineWorkbench,
+    validateMachineLoadBasket,
+    startMachineLoad,
+    unloadBasketFromMachineLoad,
+    cancelMachineLoad,
     scanBasket,
     inspectQcBasket,
     rejectBasketFromQc,
+    createReworkRequestFromQc,
+    approveReworkRequest,
+    declineReworkRequest,
+    confirmQcTransferTask,
+    listPendingQcTransferTasks,
+    listReworkRequestsByOrder,
     releaseOrderFromHold,
+    placeOrderForPickup,
     completePickup
   };
 }

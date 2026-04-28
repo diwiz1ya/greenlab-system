@@ -36,13 +36,13 @@ function handleCoreRoutes(req, res, url, ctx) {
       .then((body) => {
         const station = parseStation(stationLabels, body.station);
         if (!station) {
-          json(res, 400, { error: "Неизвестная станция" });
+          json(res, 400, { error: "Unknown station" });
           return;
         }
 
         if (!session.allowedStations.includes(station)) {
           json(res, 403, {
-            error: "Нет доступа к станции",
+            error: "No access to this station",
             station,
             label: stationLabels[station],
             allowedStations: session.allowedStations
@@ -68,7 +68,7 @@ function handleCoreRoutes(req, res, url, ctx) {
     seedDemoData({ force: true });
     json(res, 200, {
       ok: true,
-      message: "Демо-данные сброшены.",
+      message: "Demo data reset completed.",
       orders: db.prepare("SELECT COUNT(*) AS count FROM orders").get().count,
       scans: db.prepare("SELECT COUNT(*) AS count FROM scan_events").get().count
     });
@@ -84,7 +84,7 @@ function handleCoreRoutes(req, res, url, ctx) {
     const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(limitRaw, 30)) : 8;
 
     if (!station) {
-      json(res, 400, { error: "Неизвестная станция" });
+      json(res, 400, { error: "Unknown station" });
       return true;
     }
     if (!requireStationAccess(session, station, res)) return true;
@@ -107,7 +107,7 @@ function handleCoreRoutes(req, res, url, ctx) {
     const orderId = orderIdRaw ? parsePositiveInt(orderIdRaw) : null;
 
     if (orderIdRaw && !orderId) {
-      json(res, 400, { error: "Некорректный orderId" });
+      json(res, 400, { error: "Invalid orderId" });
       return true;
     }
 
@@ -133,7 +133,7 @@ function handleCoreRoutes(req, res, url, ctx) {
       return true;
     }
 
-    json(res, 400, { error: "Неподдерживаемый формат экспорта" });
+    json(res, 400, { error: "Unsupported export format" });
     return true;
   }
 

@@ -11,7 +11,10 @@ function canAccessOrderDetails(session, order) {
   if (!session || !order) return false;
   if (hasManagerRole(session)) return true;
 
-  if (hasStationAccess(session, order.status)) {
+  const orderStatus = String(order.status || "").trim();
+  const normalizedStation = orderStatus === "sorted" ? "sorting" : orderStatus;
+
+  if (hasStationAccess(session, normalizedStation)) {
     return true;
   }
 

@@ -1,4 +1,5 @@
 const { parsePositiveInt, parseRequiredString } = require("../http/validation");
+const { getClientIp } = require("../http/request-meta");
 
 function handleCleanCloudSyncRoutes(req, res, url, ctx) {
   const {
@@ -17,10 +18,17 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
     callCleanCloudUpdateOrder,
     enrichOrderContactFromCleanCloud,
     cleanCloudWebhookToken,
-    cleanCloudApiToken
+    cleanCloudApiToken,
+    cleanCloudWebhookTokenRequired,
+    trustProxy
   } = ctx;
 
   if (req.method === "POST" && url.pathname === "/api/cleancloud/webhook") {
+    if (cleanCloudWebhookTokenRequired && !cleanCloudWebhookToken) {
+      json(res, 503, { error: "Webhook token is required but not configured" });
+      return true;
+    }
+
     if (cleanCloudWebhookToken) {
       const providedToken = req.headers["x-webhook-token"] || url.searchParams.get("token");
       if (String(providedToken || "") !== cleanCloudWebhookToken) {
@@ -31,7 +39,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
 
     readJson(req)
       .then((body) => {
-        const source = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+        const source = getClientIp(req, { trustProxy });
         const result = handleCleanCloudWebhook(body, String(source));
         json(res, 200, result);
       })
@@ -62,7 +70,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
           const hasOrderId = body && Object.prototype.hasOwnProperty.call(body, "orderId");
           const scopedOrderId = hasOrderId ? parsePositiveInt(body.orderId) : null;
           if (hasOrderId && !scopedOrderId) {
-            json(res, 400, { error: "Нужен корректный orderId для sync run." });
+            json(res, 400, { error: "A valid orderId is required for sync run." });
             return;
           }
 
@@ -70,8 +78,8 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
           json(res, 200, {
             ok: true,
             message: scopedOrderId
-              ? `Sync запущен для заказа #${scopedOrderId}.`
-              : "Очередь синхронизации запущена.",
+              ? `Sync started for order #${scopedOrderId}.`
+              : "Sync queue started.",
             summary: getSyncQueueSummary()
           });
         } catch (error) {
@@ -94,7 +102,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
         try {
           const orderId = parsePositiveInt(body?.orderId);
           if (!orderId) {
-            json(res, 400, { error: "Нужен корректный orderId для retry." });
+            json(res, 400, { error: "A valid orderId is required for retry." });
             return;
           }
 
@@ -188,7 +196,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
     const parts = url.pathname.split("/");
     const orderId = parsePositiveInt(parts[3]);
     if (!orderId) {
-      json(res, 400, { error: "Некорректный id заказа" });
+      json(res, 400, { error: "Invalid order id" });
       return true;
     }
 

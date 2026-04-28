@@ -11,13 +11,14 @@ function handleAuthRoutes(req, res, url, ctx) {
     verifyHashedPassword,
     sessionStore,
     loginRateLimiter,
-    logSecurityEvent
+    logSecurityEvent,
+    trustProxy
   } = ctx;
 
   if (req.method === "POST" && url.pathname === "/api/login") {
     readJson(req)
       .then((body) => {
-        const clientIp = getClientIp(req);
+        const clientIp = getClientIp(req, { trustProxy });
         const username = parseRequiredString(body.username, { minLength: 2, maxLength: 64 });
         const password = parseRequiredString(body.password, { minLength: 1, maxLength: 256 });
         if (!username || !password) {
@@ -28,9 +29,9 @@ function handleAuthRoutes(req, res, url, ctx) {
             path: url.pathname,
             method: req.method,
             status: 400,
-            message: "Нужны корректные username/password"
+            message: "Valid username/password are required"
           });
-          json(res, 400, { error: "Нужны корректные username/password" });
+          json(res, 400, { error: "Valid username/password are required" });
           return;
         }
 
@@ -44,9 +45,9 @@ function handleAuthRoutes(req, res, url, ctx) {
             path: url.pathname,
             method: req.method,
             status: 429,
-            message: `Слишком много попыток входа. Retry after ${limiterResult.retryAfterSec}s`
+            message: `Too many login attempts. Retry after ${limiterResult.retryAfterSec}s`
           });
-          json(res, 429, { error: "Слишком много попыток входа. Повторите позже." });
+          json(res, 429, { error: "Too many login attempts. Please try again later." });
           return;
         }
 
@@ -64,9 +65,9 @@ function handleAuthRoutes(req, res, url, ctx) {
             path: url.pathname,
             method: req.method,
             status: 401,
-            message: "Неверный логин или пароль"
+            message: "Invalid username or password"
           });
-          json(res, 401, { error: "Неверный логин или пароль" });
+          json(res, 401, { error: "Invalid username or password" });
           return;
         }
 
@@ -78,7 +79,7 @@ function handleAuthRoutes(req, res, url, ctx) {
           path: url.pathname,
           method: req.method,
           status: 200,
-          message: `Успешный вход (${session.role})`
+          message: `Successful login (${session.role})`
         });
 
         json(res, 200, {
@@ -93,7 +94,7 @@ function handleAuthRoutes(req, res, url, ctx) {
         });
       })
       .catch((error) => {
-        const clientIp = getClientIp(req);
+        const clientIp = getClientIp(req, { trustProxy });
         logSecurityEvent({
           category: "auth.login.invalid_json",
           actor: "anonymous",
@@ -131,11 +132,11 @@ function handleAuthRoutes(req, res, url, ctx) {
       logSecurityEvent({
         category: "auth.logout",
         actor: session.username,
-        ip: getClientIp(req),
+        ip: getClientIp(req, { trustProxy }),
         path: url.pathname,
         method: req.method,
         status: 200,
-        message: "Пользователь вышел из системы"
+        message: "User logged out"
       });
     }
     json(res, 200, { ok: true });
