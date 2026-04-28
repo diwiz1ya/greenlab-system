@@ -7,43 +7,25 @@ export function renderLogin(renderApp, error) {
     <section class="shell login-shell">
       <div class="panel login-card stack">
         <div>
-          <div class="eyebrow">Green Lab</div>
-          <h2>Вход в рабочую систему</h2>
-          <p class="muted">Введите учетные данные сотрудника.</p>
+          <div class="eyebrow login-brand">Green Lab</div>
+          <p class="muted">Enter employee credentials.</p>
         </div>
         ${error ? `<div class="notice error">${escapeHtml(error)}</div>` : ""}
         <label>
-          Логин
-          <input id="login-username" placeholder="manager" value="manager" />
+          Username
+          <input
+            id="login-username"
+            placeholder="Enter username"
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+          />
         </label>
         <label>
-          Пароль
-          <input id="login-password" type="password" placeholder="demo123" value="demo123" />
+          Password
+          <input id="login-password" type="password" placeholder="Enter password" autocomplete="current-password" />
         </label>
-        <button id="login-submit">Войти</button>
-        <details class="login-details">
-          <summary>Демо-учетки</summary>
-          <div class="demo-credentials">
-            ${[
-              ["sorting", "Оператор сортировки"],
-              ["washing", "Оператор стирки"],
-              ["qc", "Оператор контроля качества"],
-              ["drying", "Оператор сушки"],
-              ["ironing", "Оператор глажки"],
-              ["pickup", "Оператор выдачи"],
-              ["manager", "Менеджер"]
-            ]
-              .map(
-                ([username, role]) => `
-                  <div class="credential-row">
-                    <strong>${username}</strong> / <code>demo123</code>
-                    <span class="muted">${role}</span>
-                  </div>
-                `
-              )
-              .join("")}
-          </div>
-        </details>
+        <button id="login-submit" class="login-submit">Sign in</button>
       </div>
     </section>
   `;

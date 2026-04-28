@@ -1,30 +1,72 @@
 import { state } from "./state.js";
+import { deepTranslateRuToEn, translateRuToEnText } from "./i18n.js";
 
 export async function api(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...(options.headers || {})
-    }
-  });
+  const {
+    timeoutMs = 60000,
+    headers,
+    signal,
+    ...fetchOptions
+  } = options;
 
-  let payload = {};
+  const hasExternalSignal = Boolean(signal);
+  const controller = hasExternalSignal ? null : new AbortController();
+  const effectiveSignal = hasExternalSignal ? signal : controller.signal;
+  const timeoutHandle = (!hasExternalSignal && Number.isFinite(timeoutMs) && timeoutMs > 0)
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
   try {
-    payload = await response.json();
-  } catch {
-    payload = {};
-  }
+    const isFormDataBody = typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
+    const requestHeaders = {
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...(headers || {})
+    };
+    const hasContentTypeHeader = Object.keys(requestHeaders).some(
+      (headerName) => headerName.toLowerCase() === "content-type"
+    );
+    if (isFormDataBody) {
+      for (const headerName of Object.keys(requestHeaders)) {
+        if (headerName.toLowerCase() === "content-type") {
+          delete requestHeaders[headerName];
+        }
+      }
+    } else if (!hasContentTypeHeader) {
+      requestHeaders["Content-Type"] = "application/json";
+    }
 
-  if (!response.ok) {
-    const error = new Error(payload.error || payload.message || `HTTP ${response.status}`);
-    error.status = response.status;
-    error.payload = payload;
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: effectiveSignal,
+      headers: requestHeaders
+    });
+
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    payload = deepTranslateRuToEn(payload);
+
+    if (!response.ok) {
+      const error = new Error(translateRuToEnText(payload.error || payload.message || `HTTP ${response.status}`));
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(translateRuToEnText("Server response timeout. Please try again."));
+    }
     throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
-
-  return payload;
 }
 
 export async function downloadScanExport(format, orderId = null) {
@@ -46,14 +88,15 @@ export async function downloadScanExport(format, orderId = null) {
     } catch {
       payload = {};
     }
-    throw new Error(payload.error || `Ошибка экспорта (${response.status})`);
+    payload = deepTranslateRuToEn(payload);
+    throw new Error(translateRuToEnText(payload.error || `Export failed (${response.status})`));
   }
 
   let blob;
   let extension;
 
   if (format === "json") {
-    const data = await response.json();
+    const data = deepTranslateRuToEn(await response.json());
     blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     extension = "json";
   } else {

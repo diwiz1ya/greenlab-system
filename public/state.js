@@ -1,5 +1,17 @@
 export const app = document.getElementById("app");
 
+export function createPickupPlacementDraft() {
+  return {
+    orderId: null,
+    containerCount: 1,
+    placements: [
+      { binQr: "", locationQr: "" },
+      { binQr: "", locationQr: "" }
+    ],
+    feedback: null
+  };
+}
+
 export const state = {
   token: localStorage.getItem("greenlab-demo-token"),
   user: null,
@@ -9,43 +21,77 @@ export const state = {
   selectedOrderId: null,
   activeSortingOrderId: null,
   activePickupOrderId: null,
-  pickupVerifiedOrderId: null,
-  pickupScanFlash: null,
+  pickupMode: "assembly",
+  pickupAssemblyCompletionPrompt: null,
+  pickupPlacementDraft: createPickupPlacementDraft(),
   submittingScanStation: null,
   submittingCreateOrderId: null,
+  submittingUpdateOrderId: null,
+  submittingReturnOrderId: null,
+  submittingEditSortedOrderId: null,
+  submittingPickupPlacement: false,
   submittingCompletePickupOrderId: null,
-  qcRejectReason: "stain",
+  submittingQcDecision: false,
+  submittingMachineAction: null,
+  qcRejectReason: "stain_not_removed",
+  qcSelectedIssueImageId: "",
+  qcSelectedItemCategory: "",
+  qcSelectedItemLabel: "",
+  qcCurrentPhotoDataUrl: "",
   qcInspection: null,
+  qcModalOpen: false,
+  qcModalStep: 1,
+  qcTransferPanelOpen: false,
+  submittingQcTransferRequestId: null,
+  qcTransferScanDrafts: {},
+  machineDrafts: {},
   sortingDrafts: {},
   managerFilter: "",
+  managerQuickView: null,
+  managerQuickViewAnchorY: null,
+  managerReadyOrderId: null,
+  managerSyncModalOpen: false,
+  managerHistoryModalOpen: false,
+  managerReportsModalOpen: false,
+  managerReportsRangePreset: "7d",
+  managerReportsDateFrom: "",
+  managerReportsDateTo: "",
+  managerActionDialog: null,
+  submittingManagerAction: false,
   notice: null,
   deniedStation: null,
-  simpleMode: localStorage.getItem("greenlab-simple-mode") === "1",
   lastScan: null
 };
 
 export const stationLabels = {
-  overview: "Обзор",
-  sorting: "Сортировка",
-  washing: "Стирка",
-  qc: "Контроль качества (QC)",
-  drying: "Сушка",
-  ironing: "Глажка",
-  pickup: "Выдача"
+  overview: "Overview",
+  sorting: "Sorting",
+  washing: "Washing",
+  drying: "Drying",
+  qc: "Quality Control (QC)",
+  rework: "Rework",
+  ironing: "Ironing",
+  pickup: "Pickup"
 };
 
 export const stationDescriptions = {
-  overview: "Обзор филиала и контроль статусов.",
-  sorting: "Создание корзин, генерация QR и запуск заказа в работу.",
-  washing: "Станция стирки: только сканирование.",
-  qc: "Проверка качества после стирки перед сушкой.",
-  drying: "Станция сушки: только сканирование.",
-  ironing: "Станция глажки: только сканирование перед выдачей.",
-  pickup: "Подтверждение выдачи. Финальное закрытие — только в CleanCloud."
+  overview: "Branch overview and status monitoring.",
+  sorting: "Create baskets, assign QR labels, and start production.",
+  washing: "Washing station: scan-only workflow.",
+  drying: "Drying station: scan-only before QC.",
+  qc: "Quality check after drying and before ironing.",
+  rework: "Rework after QC: scan returns basket back to QC.",
+  ironing: "Ironing station: scan-only after QC and before pickup.",
+  pickup: "Pickup assembly and storage location placement."
 };
 
 export function isScanStation(station) {
-  return station === "washing" || station === "qc" || station === "drying" || station === "ironing" || station === "pickup";
+  return station === "washing"
+    || station === "qc"
+    || station === "rework"
+    || station === "drying"
+    || station === "ironing"
+    || station === "pickup";
 }
 
 export function isManagerRole() {
@@ -73,19 +119,21 @@ export function applyRoleDefaults() {
   state.currentStation = primaryStation;
   state.screen = "station";
   state.deniedStation = null;
-
-  if (isScanStation(primaryStation)) {
-    state.simpleMode = true;
-  }
 }
 
-export function setSimpleMode(next) {
-  state.simpleMode = Boolean(next);
-  if (state.simpleMode) {
-    localStorage.setItem("greenlab-simple-mode", "1");
-  } else {
-    localStorage.removeItem("greenlab-simple-mode");
-  }
+export function resetQcState() {
+  state.submittingQcDecision = false;
+  state.qcRejectReason = "stain_not_removed";
+  state.qcSelectedIssueImageId = "";
+  state.qcSelectedItemCategory = "";
+  state.qcSelectedItemLabel = "";
+  state.qcCurrentPhotoDataUrl = "";
+  state.qcInspection = null;
+  state.qcModalOpen = false;
+  state.qcModalStep = 1;
+  state.qcTransferPanelOpen = false;
+  state.submittingQcTransferRequestId = null;
+  state.qcTransferScanDrafts = {};
 }
 
 export function resetSession() {
@@ -97,15 +145,32 @@ export function resetSession() {
   state.selectedOrderId = null;
   state.activeSortingOrderId = null;
   state.activePickupOrderId = null;
-  state.pickupVerifiedOrderId = null;
-  state.pickupScanFlash = null;
+  state.pickupMode = "assembly";
+  state.pickupAssemblyCompletionPrompt = null;
+  state.pickupPlacementDraft = createPickupPlacementDraft();
   state.submittingScanStation = null;
   state.submittingCreateOrderId = null;
+  state.submittingUpdateOrderId = null;
+  state.submittingReturnOrderId = null;
+  state.submittingEditSortedOrderId = null;
+  state.submittingPickupPlacement = false;
   state.submittingCompletePickupOrderId = null;
-  state.qcRejectReason = "stain";
-  state.qcInspection = null;
+  state.submittingMachineAction = null;
+  resetQcState();
+  state.machineDrafts = {};
   state.sortingDrafts = {};
   state.managerFilter = "";
+  state.managerQuickView = null;
+  state.managerQuickViewAnchorY = null;
+  state.managerReadyOrderId = null;
+  state.managerSyncModalOpen = false;
+  state.managerHistoryModalOpen = false;
+  state.managerReportsModalOpen = false;
+  state.managerReportsRangePreset = "7d";
+  state.managerReportsDateFrom = "";
+  state.managerReportsDateTo = "";
+  state.managerActionDialog = null;
+  state.submittingManagerAction = false;
   state.deniedStation = null;
   state.lastScan = null;
   localStorage.removeItem("greenlab-demo-token");
