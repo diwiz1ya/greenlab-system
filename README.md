@@ -45,8 +45,11 @@ npm start
 
 - `CLEAN_CLOUD_API_TOKEN` - токен API CleanCloud
 - `CLEAN_CLOUD_API_BASE` - базовый URL API (по умолчанию `https://cleancloudapp.com/api`)
-- `CLEAN_CLOUD_WEBHOOK_TOKEN` - если задан, webhook требует `x-webhook-token` или `?token=...`
+- `CLEAN_CLOUD_WEBHOOK_TOKEN` - токен для webhook (`x-webhook-token` или `?token=...`)
 - `CLEAN_CLOUD_SYNC_RETRY_LIMIT` - лимит попыток для очереди (по умолчанию `5`)
+- `GREENLAB_REQUIRE_WEBHOOK_TOKEN` - требовать токен webhook (по умолчанию `true` в `NODE_ENV=production`, иначе `false`)
+- `GREENLAB_TRUST_PROXY` - доверять `x-forwarded-for` для IP/рейта (`false` по умолчанию)
+- `GREENLAB_DEMO_RESET_ON_BOOT` - сбрасывать демо-данные на старте (`false` по умолчанию)
 
 Новые API для менеджера:
 
@@ -54,7 +57,7 @@ npm start
 - `POST /api/sync/run` - принудительно прогнать очередь синка
 - `GET /api/webhooks/events` - последние webhook-события
 - `POST /api/cleancloud/test-update` - безопасный тест записи статуса в CleanCloud
-- `POST /api/cleancloud/webhook` - входящий webhook endpoint (без авторизации в UI)
+- `POST /api/cleancloud/webhook` - входящий webhook endpoint (без авторизации в UI, но с токеном если включена защита webhook)
 
 ## Автотесты
 
@@ -67,6 +70,78 @@ npm run test:all
 ```bash
 CLEAN_CLOUD_API_TOKEN=... npm run test:all
 ```
+
+## Быстрые тестовые сценарии
+
+Поднять воспроизводимый набор заказов для UI и ручного тестирования:
+
+```bash
+npm run seed:scenario
+```
+
+По умолчанию команда собирает сценарий:
+
+- `6` заказов в `sorting`
+- `6` заказов в `sorted`
+
+Скрипт:
+
+- сам ищет запущенный локальный сервер (`3011`, `3010`, `3012`)
+- делает `reset demo`
+- добавляет недостающие заказы
+- переводит нужное количество заказов в `sorted` через рабочий API
+
+Важно: перед запуском сценария сервер должен быть уже поднят.
+
+## Live smoke check
+
+Быстрая проверка основной цепочки на уже поднятом локальном сервере:
+
+```bash
+npm run smoke:live
+```
+
+Скрипт:
+
+- сам находит живой сервер (`3011`, `3010`, `3012`)
+- делает `reset demo`
+- создает корзину на sorting
+- прогоняет заказ через `washing -> drying -> qc -> ironing -> pickup`
+- выполняет `placement` и `complete pickup`
+
+Важно:
+
+- это именно live smoke, он меняет текущее демо-состояние
+- запускать его лучше перед показом, проверкой или после обновлений
+
+## Workflow audit
+
+Проверка БД на битые workflow-состояния:
+
+```bash
+npm run audit:workflow
+```
+
+Дополнительно:
+
+- JSON-вывод: `npm run audit:workflow -- --json`
+- завершать с ошибкой при найденных проблемах: `npm run audit:workflow -- --fail-on-issues`
+
+Скрипт ищет:
+
+- корзины с `station != status`
+- pickup-флаги вне статуса `pickup`
+- `ready_to_place`/`ready_for_pickup` при корзинах вне `pickup`
+- дубли `BIN/LOC/slot` в активных placement-записях
+- `ready_for_pickup` без placement или без полной сборки BIN
+
+## Печать QR-корзин BIN-001..BIN-050
+
+```bash
+npm run labels:baskets
+```
+
+PDF сохраняется в `output/bin-qr-labels-001-050.pdf`.
 
 ## Минимальный ops-контур
 
