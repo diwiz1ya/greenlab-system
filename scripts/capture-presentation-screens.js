@@ -2,11 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require("playwright");
 
-const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3011";
+const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3010";
 const OUT_DIR = path.join(__dirname, "..", "presentation", "assets");
 const VIEWPORT = { width: 1600, height: 1000 };
-
-const MANAGER_CREDENTIALS = { username: "manager", password: "demo123" };
+const PASSWORD = "demo123";
+const MANAGER_CREDENTIALS = { username: "manager", password: PASSWORD };
 
 function ensureOutDir() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -47,109 +47,138 @@ async function resetDemoState() {
     method: "POST",
     body: MANAGER_CREDENTIALS
   });
-  const token = login.token;
-  await api("/api/demo/reset", { method: "POST", token });
-  await api("/api/logout", { method: "POST", token });
+
+  await api("/api/demo/reset", { method: "POST", token: login.token });
+  await api("/api/logout", { method: "POST", token: login.token });
 }
 
-async function loginUi(page, username, password) {
+async function openLogin(page) {
   await page.goto(BASE_URL, { waitUntil: "networkidle" });
-  await page.waitForSelector("#login-username");
+  await page.waitForSelector("#login-submit");
+}
+
+async function loginUi(page, username, password = PASSWORD) {
+  await openLogin(page);
   await page.fill("#login-username", username);
   await page.fill("#login-password", password);
   await page.click("#login-submit");
-  await page.waitForSelector("#logout-button");
+  await page.waitForSelector("#logout-button", { timeout: 20000 });
+}
+
+async function capture(page, fileName) {
+  await page.screenshot({
+    path: path.join(OUT_DIR, fileName),
+    fullPage: true
+  });
+}
+
+async function withLoggedContext(browser, username, fn) {
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  const page = await context.newPage();
+  try {
+    await loginUi(page, username);
+    await fn(page);
+  } finally {
+    await context.close();
+  }
 }
 
 async function captureLogin(browser) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
-  await page.goto(BASE_URL, { waitUntil: "networkidle" });
-  await page.waitForSelector("#login-submit");
-  await page.screenshot({
-    path: path.join(OUT_DIR, "01-login.png"),
-    fullPage: true
-  });
-  await context.close();
+  try {
+    await openLogin(page);
+    await capture(page, "01-login.png");
+  } finally {
+    await context.close();
+  }
 }
 
 async function captureSorting(browser) {
-  const context = await browser.newContext({ viewport: VIEWPORT });
-  const page = await context.newPage();
-  await loginUi(page, "sorting", "demo123");
+  await withLoggedContext(browser, "sorting", async (page) => {
+    await page.waitForSelector("[data-select-sorting-order], [data-edit-sorted-baskets]", { timeout: 20000 });
+    await capture(page, "02-sorting-inbox.png");
 
-  await page.waitForSelector("text=Входящие заказы");
-  await page.screenshot({
-    path: path.join(OUT_DIR, "02-sorting-inbox.png"),
-    fullPage: true
+    const firstOrderButton = page.locator("[data-select-sorting-order]").first();
+    if (await firstOrderButton.count()) {
+      await firstOrderButton.click();
+      await page.waitForSelector(".sorting-modal-sheet", { timeout: 10000 });
+      await page.waitForTimeout(250);
+      const modal = page.locator(".sorting-modal-sheet").first();
+      await modal.screenshot({
+        path: path.join(OUT_DIR, "03-sorting-modal.png")
+      });
+    }
   });
+}
 
-  const firstOrderButton = page.locator("[data-select-sorting-order]").first();
-  if (await firstOrderButton.count()) {
-    await firstOrderButton.click();
-    await page.waitForSelector(".sorting-modal-sheet");
-    await page.screenshot({
-      path: path.join(OUT_DIR, "03-sorting-modal.png"),
-      fullPage: true
-    });
-  }
+async function captureWashing(browser) {
+  await withLoggedContext(browser, "washing", async (page) => {
+    await page.waitForSelector("[data-machine-open-flow='washing'][data-machine-flow-mode='load']", { timeout: 20000 });
+    await page.click("[data-machine-open-flow='washing'][data-machine-flow-mode='load']");
+    await page.waitForSelector(".machine-flow-sheet", { timeout: 10000 });
+    await capture(page, "04-washing-load.png");
+  });
+}
 
-  await context.close();
+async function captureDrying(browser) {
+  await withLoggedContext(browser, "drying", async (page) => {
+    await page.waitForSelector("[data-machine-open-flow='drying'][data-machine-flow-mode='load']", { timeout: 20000 });
+    await page.click("[data-machine-open-flow='drying'][data-machine-flow-mode='load']");
+    await page.waitForSelector(".machine-flow-sheet", { timeout: 10000 });
+    await capture(page, "05-drying-load.png");
+  });
 }
 
 async function captureQc(browser) {
-  const context = await browser.newContext({ viewport: VIEWPORT });
-  const page = await context.newPage();
-  await loginUi(page, "qc", "demo123");
+  await withLoggedContext(browser, "qc", async (page) => {
+    await page.waitForSelector("#simple-scan-input", { timeout: 20000 });
+    await capture(page, "06-qc-workbench.png");
 
-  await page.waitForSelector("#simple-scan-input");
-  await page.fill("#simple-scan-input", "QR:B-2403-1");
-  await page.keyboard.press("Enter");
-  await page.waitForSelector(".qc-modal-sheet");
-  await page.screenshot({
-    path: path.join(OUT_DIR, "04-qc-decision.png"),
-    fullPage: true
+    await page.fill("#simple-scan-input", "QR:B-2403-1");
+    await page.keyboard.press("Enter");
+    try {
+      await page.waitForSelector(".qc-modal-sheet", { timeout: 3500 });
+      await capture(page, "06-qc-decision.png");
+    } catch {
+      // Keep flow deterministic when no basket is available for QC decision modal.
+    }
   });
+}
 
-  await context.close();
+async function captureRework(browser) {
+  await withLoggedContext(browser, "rework", async (page) => {
+    await page.waitForSelector("[data-scan-input-for='rework']", { timeout: 20000 });
+    await capture(page, "07-rework-scan.png");
+  });
+}
+
+async function captureIroning(browser) {
+  await withLoggedContext(browser, "ironing", async (page) => {
+    await page.waitForSelector("[data-scan-input-for='ironing']", { timeout: 20000 });
+    await capture(page, "08-ironing-scan.png");
+  });
 }
 
 async function capturePickup(browser) {
-  const context = await browser.newContext({ viewport: VIEWPORT });
-  const page = await context.newPage();
-  await loginUi(page, "pickup", "demo123");
-
-  await page.waitForSelector("text=Выдача");
-  await page.screenshot({
-    path: path.join(OUT_DIR, "05-pickup-workbench.png"),
-    fullPage: true
+  await withLoggedContext(browser, "pickup", async (page) => {
+    await page.waitForSelector("[data-pickup-mode='assembly']", { timeout: 20000 });
+    await capture(page, "09-pickup-workbench.png");
   });
-
-  await context.close();
 }
 
 async function captureManager(browser) {
-  const context = await browser.newContext({ viewport: VIEWPORT });
-  const page = await context.newPage();
-  await loginUi(page, "manager", "demo123");
+  await withLoggedContext(browser, "manager", async (page) => {
+    await page.waitForSelector("[data-manager-filter], .manager-shell, .manager-root", { timeout: 20000 });
+    await capture(page, "10-manager-dashboard.png");
 
-  await page.waitForSelector("text=Пульт смены");
-  await page.screenshot({
-    path: path.join(OUT_DIR, "06-manager-dashboard.png"),
-    fullPage: true
+    const openOrderButton = page.locator("[data-open-order]").first();
+    if (await openOrderButton.count()) {
+      await openOrderButton.click();
+      await page.waitForSelector(".order-details-compact h2, .order-details-sheet h2, .order-modal-sheet h2", { timeout: 10000 });
+      await capture(page, "11-manager-order-details.png");
+    }
   });
-
-  const openOrderButton = page.locator("[data-open-order]").first();
-  if (await openOrderButton.count()) {
-    await openOrderButton.click();
-    await page.waitForSelector(".order-details-compact h2");
-    await page.screenshot({
-      path: path.join(OUT_DIR, "07-manager-order-details.png"),
-      fullPage: true
-    });
-  }
-
-  await context.close();
 }
 
 async function run() {
@@ -160,7 +189,11 @@ async function run() {
   try {
     await captureLogin(browser);
     await captureSorting(browser);
+    await captureWashing(browser);
+    await captureDrying(browser);
     await captureQc(browser);
+    await captureRework(browser);
+    await captureIroning(browser);
     await capturePickup(browser);
     await captureManager(browser);
   } finally {

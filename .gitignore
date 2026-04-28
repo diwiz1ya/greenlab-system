@@ -3,13 +3,32 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/*-stdout.log
+data/*-stderr.log
+data/*.png
+data/*-review/
+data/login-regression-check/
 
 *.log
 *.out.log
 *.err.log
+logs/
+output/
+cloudflared*.log
+cloudflared*.err.log
+server-*.log
+server-*.err.log
+wireguard-client.conf
+wireguard-client-qr.png
 
 backups/
 data/recovery-snapshots/
+presentation/.tmp-pdf/
+presentation/assets/live-check/
+presentation/*.pdf
+docs/*.html
+public/images/**/*.ui.png
+public/uploads/
 
 .env
 .env.*
