@@ -1310,7 +1310,7 @@ function createWorkflowService(options) {
   }
 
   function completePickup(orderId, actor) {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    const order = workflowRepository.findPickupCompletionOrder(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
@@ -1333,52 +1333,21 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    const orderBaskets = db.prepare(`
-      SELECT id, qr_code
-      FROM baskets
-      WHERE order_id = ?
-      ORDER BY id ASC
-    `).all(orderId);
-
-    const updateOrderAfterPickup = db.prepare(`
-      UPDATE orders
-      SET status = 'pickup', cleancloud_status = 'Выдано', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `);
-    const archiveBasket = db.prepare(`
-      UPDATE baskets
-      SET qr_code = ?, station = 'archived', status = 'archived', updated_at = ?
-      WHERE id = ?
-    `);
-    const insertScanEvent = db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'pickup', ?, 'ok', ?, ?)
-    `);
-    const releasePlacements = db.prepare(`
-      UPDATE pickup_order_placements
-      SET released_at = ?, released_by = ?, updated_at = ?
-      WHERE order_id = ?
-        AND released_at IS NULL
-    `);
+    const orderBaskets = workflowRepository.listOrderBasketsForArchive(orderId);
 
     try {
       runImmediateTransaction(db, () => {
-        updateOrderAfterPickup.run(timestamp, orderId);
-        releasePlacements.run(timestamp, actor, timestamp, orderId);
-        insertScanEvent.run(orderId, actor, "Выдача подтверждена менеджером.", timestamp);
+        workflowRepository.markOrderPickedUp({ orderId, timestamp });
+        workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
+        insertScanEvent(orderId, null, "pickup", actor, "ok", "Выдача подтверждена менеджером.", timestamp);
 
         for (const basket of orderBaskets) {
           const archivedQrCode = `ARCHIVED:${basket.id}:${timestamp}`;
-          archiveBasket.run(archivedQrCode, timestamp, basket.id);
+          workflowRepository.archiveBasket({ basketId: basket.id, archivedQrCode, timestamp });
         }
 
         if (orderBaskets.length > 0) {
-          insertScanEvent.run(
-            orderId,
-            actor,
-            `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`,
-            timestamp
-          );
+          insertScanEvent(orderId, null, "pickup", actor, "ok", `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`, timestamp);
         }
         queueSync(orderId, "cleancloud.status", {
           orderId: order.cleancloud_order_id,

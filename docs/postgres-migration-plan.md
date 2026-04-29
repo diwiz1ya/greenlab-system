@@ -27,6 +27,7 @@
 - Workflow scan basket reads/writes уже частично вынесены в SQLite workflow repository.
 - Workflow HOLD release reads/writes уже вынесены в SQLite workflow repository.
 - Workflow pickup placement reads/writes уже вынесены в SQLite workflow repository.
+- Workflow pickup completion reads/writes уже вынесены в SQLite workflow repository.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -81,6 +82,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 - workflow scan basket reads/writes
 - workflow HOLD release reads/writes
 - workflow pickup placement reads/writes
+- workflow pickup completion reads/writes
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads

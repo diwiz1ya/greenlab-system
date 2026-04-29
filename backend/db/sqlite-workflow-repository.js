@@ -377,6 +377,23 @@ function createSqliteWorkflowRepository(db) {
     SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = ?
     WHERE id = ?
   `);
+  const findPickupCompletionOrderStmt = db.prepare("SELECT * FROM orders WHERE id = ?");
+  const listOrderBasketsForArchiveStmt = db.prepare(`
+    SELECT id, qr_code
+    FROM baskets
+    WHERE order_id = ?
+    ORDER BY id ASC
+  `);
+  const markOrderPickedUpStmt = db.prepare(`
+    UPDATE orders
+    SET status = 'pickup', cleancloud_status = 'Выдано', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
+    WHERE id = ?
+  `);
+  const archiveBasketStmt = db.prepare(`
+    UPDATE baskets
+    SET qr_code = ?, station = 'archived', status = 'archived', updated_at = ?
+    WHERE id = ?
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -427,7 +444,11 @@ function createSqliteWorkflowRepository(db) {
     insertPickupOrderPlacement: ({ orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp }) => (
       insertPickupOrderPlacementStmt.run(orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp, timestamp, timestamp)
     ),
-    markOrderPlacedForPickup: ({ orderId, timestamp }) => markOrderPlacedForPickupStmt.run(timestamp, orderId)
+    markOrderPlacedForPickup: ({ orderId, timestamp }) => markOrderPlacedForPickupStmt.run(timestamp, orderId),
+    findPickupCompletionOrder: (orderId) => findPickupCompletionOrderStmt.get(orderId),
+    listOrderBasketsForArchive: (orderId) => listOrderBasketsForArchiveStmt.all(orderId),
+    markOrderPickedUp: ({ orderId, timestamp }) => markOrderPickedUpStmt.run(timestamp, orderId),
+    archiveBasket: ({ basketId, archivedQrCode, timestamp }) => archiveBasketStmt.run(archivedQrCode, timestamp, basketId)
   };
 }
 
