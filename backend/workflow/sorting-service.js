@@ -3,13 +3,11 @@
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
-const { getLastInsertRowId } = require("../db/statement-result");
 const { normalizeBasketQrCode } = require("./basket-pool");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 
 function createSortingWorkflow(options) {
   const {
-    db,
     sortingRepository,
     nowIso,
     publicUploadsDir,
@@ -303,14 +301,6 @@ function createSortingWorkflow(options) {
   }
 
   async function insertBaskets(order, baskets, timestamp) {
-    const insertBasket = db.prepare(`
-      INSERT INTO baskets (
-        order_id, basket_code, basket_type, basket_items_json, station, status, qr_code,
-        label_printed_at, label_print_count, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, 'washing', 'washing', ?, ?, ?, ?, ?)
-    `);
-
     for (let index = 0; index < baskets.length; index += 1) {
       const basket = baskets[index];
       const basketCode = `B-${order.public_id.slice(3)}-${index + 1}`;
@@ -318,18 +308,16 @@ function createSortingWorkflow(options) {
       if (!qrCode) {
         throw new Error("Basket QR is not specified.");
       }
-      const insertBasketResult = insertBasket.run(
-        order.id,
+      const basketId = sortingRepository.insertBasket({
+        orderId: order.id,
         basketCode,
-        basket.type,
-        basket.itemCounts ? itemCountsToJson(basket.itemCounts) : null,
+        basketType: basket.type,
+        basketItemsJson: basket.itemCounts ? itemCountsToJson(basket.itemCounts) : null,
         qrCode,
-        basket.labelPrintedAt || null,
-        normalizeLabelPrintCount(basket.labelPrintCount),
-        timestamp,
+        labelPrintedAt: basket.labelPrintedAt || null,
+        labelPrintCount: normalizeLabelPrintCount(basket.labelPrintCount),
         timestamp
-      );
-      const basketId = getLastInsertRowId(insertBasketResult, "basket");
+      });
       if (Array.isArray(basket.photos) && basket.photos.length) {
         await saveBasketPhotos(basketId, order.id, basketCode, basket.photos, timestamp);
       }
@@ -337,7 +325,7 @@ function createSortingWorkflow(options) {
   }
 
   async function createBaskets(orderId, payload, actor) {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    const order = sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -345,7 +333,7 @@ function createSortingWorkflow(options) {
       return { error: "Order is not at sorting station.", status: 400 };
     }
 
-    const existing = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?").get(orderId).count;
+    const existing = sortingRepository.countBasketsByOrder(orderId);
     if (existing > 0) {
       return { error: "Baskets are already created.", status: 400 };
     }
@@ -373,16 +361,14 @@ function createSortingWorkflow(options) {
       return { error: error?.message || "Failed to create baskets.", status: 500 };
     }
 
-    db.prepare(`
-      UPDATE orders
-      SET status = 'sorted', cleancloud_status = 'In progress', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
+    sortingRepository.markOrderSorted({ orderId, timestamp });
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'sorting', ?, 'ok', 'Baskets created, QR labels prepared. Order is waiting for washing.', ?)
-    `).run(orderId, actor, timestamp);
+    sortingRepository.insertSortingScanEvent({
+      orderId,
+      actor,
+      message: "Baskets created, QR labels prepared. Order is waiting for washing.",
+      timestamp
+    });
 
     queueSync(orderId, "cleancloud.status", {
       orderId: order.cleancloud_order_id,
@@ -393,7 +379,7 @@ function createSortingWorkflow(options) {
   }
 
   async function updateSortedBaskets(orderId, payload, actor) {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    const order = sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -414,7 +400,7 @@ function createSortingWorkflow(options) {
       return { error: `QR ${qrConflict} is already used by another order.`, status: 409 };
     }
 
-    const basketCount = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?").get(orderId).count;
+    const basketCount = sortingRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "Order has no baskets to edit.", status: 400 };
     }
@@ -422,7 +408,7 @@ function createSortingWorkflow(options) {
     const timestamp = nowIso();
     try {
       deleteBasketAssetsByOrderId(orderId);
-      db.prepare("DELETE FROM baskets WHERE order_id = ?").run(orderId);
+      sortingRepository.deleteBasketsByOrder(orderId);
       await insertBaskets(order, prepared.baskets, timestamp);
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
@@ -431,27 +417,20 @@ function createSortingWorkflow(options) {
       return { error: error?.message || "Failed to update baskets.", status: 500 };
     }
 
-    db.prepare(`
-      UPDATE orders
-      SET status = 'sorted', cleancloud_status = 'In progress', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
+    sortingRepository.markOrderSorted({ orderId, timestamp });
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'sorting', ?, 'ok', ?, ?)
-    `).run(
+    sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
-      `Basket set updated: ${normalized.baskets.length} pcs. Order remains waiting for washing.`,
+      message: `Basket set updated: ${normalized.baskets.length} pcs. Order remains waiting for washing.`,
       timestamp
-    );
+    });
 
     return { ok: true, order: getOrderDetails(orderId) };
   }
 
   function returnSortedOrderToSorting(orderId, actor) {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    const order = sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -459,25 +438,23 @@ function createSortingWorkflow(options) {
       return { error: "Return is available only for orders waiting for washing.", status: 400 };
     }
 
-    const basketCount = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?").get(orderId).count;
+    const basketCount = sortingRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "Order has no baskets to return to sorting.", status: 400 };
     }
 
     const timestamp = nowIso();
     deleteBasketAssetsByOrderId(orderId);
-    db.prepare("DELETE FROM baskets WHERE order_id = ?").run(orderId);
+    sortingRepository.deleteBasketsByOrder(orderId);
 
-    db.prepare(`
-      UPDATE orders
-      SET status = 'sorting', cleancloud_status = 'New order', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
+    sortingRepository.markOrderReturnedToSorting({ orderId, timestamp });
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'sorting', ?, 'ok', 'Order returned to sorting. Baskets were removed, new split is required.', ?)
-    `).run(orderId, actor, timestamp);
+    sortingRepository.insertSortingScanEvent({
+      orderId,
+      actor,
+      message: "Order returned to sorting. Baskets were removed, new split is required.",
+      timestamp
+    });
 
     queueSync(orderId, "cleancloud.status", {
       orderId: order.cleancloud_order_id,

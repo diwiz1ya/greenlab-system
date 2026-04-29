@@ -60,7 +60,6 @@ function createWorkflowService(options) {
   workflowRepository.normalizeMachineLoadStatuses();
 
   const { createBaskets, updateSortedBaskets, returnSortedOrderToSorting } = createSortingWorkflow({
-    db,
     sortingRepository,
     nowIso,
     publicUploadsDir,
