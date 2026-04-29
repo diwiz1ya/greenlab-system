@@ -10,6 +10,7 @@
 - `GREENLAB_DB_CLIENT=postgres` намеренно не запускает приложение, пока запросы не переведены на асинхронный PostgreSQL-адаптер.
 - Черновик PostgreSQL-схемы добавлен в `backend/db/postgres-schema.sql`, но runtime его пока не применяет автоматически.
 - Placeholder conversion helper добавлен в `backend/db/sql-placeholders.js`; быстрый тест доступен через `npm run test:sql-placeholders`.
+- PostgreSQL runtime scaffold добавлен в `backend/db/postgres.js`; он валидирует будущий connection URL, но намеренно блокирует запуск до async repository-адаптеров.
 - SQL portability audit доступен через `npm run audit:db`.
 - DB boundary audit доступен через `npm run audit:db-boundaries` и проверяет, что runtime-сервисы не используют `db.prepare/db.exec` вне `backend/db`.
 - DB schema parity audit доступен через `npm run audit:db-schema` и проверяет совпадение таблиц/колонок между SQLite bootstrap/migrations и PostgreSQL draft.
