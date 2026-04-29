@@ -10,6 +10,7 @@ const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 function createSortingWorkflow(options) {
   const {
     db,
+    sortingRepository,
     nowIso,
     publicUploadsDir,
     getOrderDetails,
@@ -99,39 +100,15 @@ function createSortingWorkflow(options) {
   }
 
   function listKnownCatalogQrs() {
-    return db.prepare(`
-      SELECT qr_code
-      FROM basket_catalog
-      WHERE is_active = 1
-      ORDER BY label ASC
-    `).all().map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
+    return sortingRepository.listKnownCatalogQrs().map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
   }
 
   function listFreeCatalogQrs(limit, excludeOrderId = 0) {
     const size = Number.isInteger(limit) ? Math.max(0, limit) : 0;
     if (size <= 0) return [];
-    if (excludeOrderId > 0) {
-      return db.prepare(`
-        SELECT c.qr_code
-        FROM basket_catalog c
-        LEFT JOIN baskets b
-          ON b.qr_code = c.qr_code
-         AND b.order_id != ?
-        WHERE c.is_active = 1
-          AND b.id IS NULL
-        ORDER BY c.label ASC
-        LIMIT ?
-      `).all(excludeOrderId, size).map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
-    }
-    return db.prepare(`
-      SELECT c.qr_code
-      FROM basket_catalog c
-      LEFT JOIN baskets b ON b.qr_code = c.qr_code
-      WHERE c.is_active = 1
-        AND b.id IS NULL
-      ORDER BY c.label ASC
-      LIMIT ?
-    `).all(size).map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
+    return sortingRepository.listFreeCatalogQrs({ limit: size, excludeOrderId })
+      .map((row) => normalizeBasketQrCode(row.qr_code))
+      .filter(Boolean);
   }
 
   function assignAndValidateCatalogQrs(baskets, options = {}) {
@@ -203,12 +180,7 @@ function createSortingWorkflow(options) {
 
   function deleteBasketImageFilesByBasketIds(basketIds) {
     if (!Array.isArray(basketIds) || !basketIds.length) return;
-    const placeholders = basketIds.map(() => "?").join(", ");
-    const images = db.prepare(`
-      SELECT id, file_path
-      FROM basket_images
-      WHERE basket_id IN (${placeholders})
-    `).all(...basketIds);
+    const images = sortingRepository.listBasketImagesByBasketIds(basketIds);
 
     for (const image of images) {
       try {
@@ -220,32 +192,27 @@ function createSortingWorkflow(options) {
       }
     }
 
-    db.prepare(`DELETE FROM basket_images WHERE basket_id IN (${placeholders})`).run(...basketIds);
+    sortingRepository.deleteBasketImagesByBasketIds(basketIds);
   }
 
   function deleteBasketAssetsByOrderId(orderId) {
-    const basketIds = db.prepare("SELECT id FROM baskets WHERE order_id = ?").all(orderId).map((row) => row.id);
+    const basketIds = sortingRepository.listBasketIdsByOrder(orderId);
     deleteBasketImageFilesByBasketIds(basketIds);
   }
 
   async function saveBasketPhotos(basketId, orderId, basketCode, photos, timestamp) {
-    const insertImage = db.prepare(`
-      INSERT INTO basket_images (basket_id, image_role, sort_order, note, file_path, public_url, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
     for (let index = 0; index < photos.length; index += 1) {
       const photo = photos[index];
       const stored = await writeBasketPhotoFile(orderId, basketCode, photo, index);
-      insertImage.run(
+      sortingRepository.insertBasketImage({
         basketId,
-        photo.role,
-        index,
-        photo.note || null,
-        stored.filePath,
-        stored.publicUrl,
+        role: photo.role,
+        sortOrder: index,
+        note: photo.note || null,
+        filePath: stored.filePath,
+        publicUrl: stored.publicUrl,
         timestamp
-      );
+      });
     }
   }
 
@@ -328,12 +295,8 @@ function createSortingWorkflow(options) {
       : [];
     if (!list.length) return null;
 
-    const query = excludeOrderId > 0
-      ? db.prepare("SELECT qr_code FROM baskets WHERE qr_code = ? AND order_id != ? LIMIT 1")
-      : db.prepare("SELECT qr_code FROM baskets WHERE qr_code = ? LIMIT 1");
-
     for (const qrCode of list) {
-      const row = excludeOrderId > 0 ? query.get(qrCode, excludeOrderId) : query.get(qrCode);
+      const row = sortingRepository.findConflictingQrCode({ qrCode, excludeOrderId });
       if (row?.qr_code) return row.qr_code;
     }
     return null;

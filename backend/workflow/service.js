@@ -11,6 +11,7 @@ function createWorkflowService(options) {
     db,
     workflowRepository,
     reworkRepository,
+    sortingRepository,
     nowIso,
     basketUploadsDir,
     getOrderDetails,
@@ -60,6 +61,7 @@ function createWorkflowService(options) {
 
   const { createBaskets, updateSortedBaskets, returnSortedOrderToSorting } = createSortingWorkflow({
     db,
+    sortingRepository,
     nowIso,
     publicUploadsDir,
     getOrderDetails,

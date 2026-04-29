@@ -144,6 +144,7 @@ const {
   reworkRepository,
   scanRepository,
   securityEventRepository,
+  sortingRepository,
   systemRepository,
   userRepository,
   workflowRepository
@@ -230,6 +231,7 @@ const {
   db,
   workflowRepository,
   reworkRepository,
+  sortingRepository,
   nowIso,
   basketUploadsDir: BASKET_UPLOADS_DIR,
   getOrderDetails,
