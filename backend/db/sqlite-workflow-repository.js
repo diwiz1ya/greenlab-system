@@ -178,7 +178,7 @@ function createSqliteWorkflowRepository(db) {
   `);
   const insertScanEventStmt = db.prepare(`
     INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-    VALUES (?, ?, ?, ?, 'ok', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const getMachineLoadByIdStmt = db.prepare(`
     SELECT
@@ -268,6 +268,30 @@ function createSqliteWorkflowRepository(db) {
     SET status = 'cancelled', cancelled_by = ?, cancelled_at = ?, updated_at = ?
     WHERE id = ?
   `);
+  const findOrderPublicIdStmt = db.prepare("SELECT public_id FROM orders WHERE id = ?");
+  const getPickupScanOrderStateStmt = db.prepare(`
+    SELECT status, ready_to_place, ready_for_pickup
+    FROM orders
+    WHERE id = ?
+  `);
+  const hasPickupHandoverConfirmationStmt = db.prepare(`
+    SELECT 1 AS ok
+    FROM scan_events
+    WHERE order_id = ?
+      AND station = 'pickup'
+      AND result = 'ok'
+      AND message LIKE 'Выдача подтверждена.%'
+    LIMIT 1
+  `);
+  const hasBasketPickupOkScanStmt = db.prepare(`
+    SELECT 1 AS ok
+    FROM scan_events
+    WHERE order_id = ?
+      AND basket_id = ?
+      AND station = 'pickup'
+      AND result = 'ok'
+    LIMIT 1
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -288,7 +312,7 @@ function createSqliteWorkflowRepository(db) {
     findActiveMachineLoadByBasketId: (basketId) => findActiveMachineLoadByBasketIdStmt.get(basketId),
     insertMachineLoad: ({ machineId, station, actor, timestamp }) => insertMachineLoadStmt.run(machineId, station, actor, timestamp, timestamp, timestamp),
     insertMachineLoadBasket: ({ loadId, basketId, orderId, timestamp }) => insertMachineLoadBasketStmt.run(loadId, basketId, orderId, timestamp),
-    insertScanEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, message, timestamp),
+    insertScanEvent: ({ orderId, basketId, station, actor, result = "ok", message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, result, message, timestamp),
     getMachineLoadById: (loadId) => getMachineLoadByIdStmt.get(loadId),
     listPendingMachineLoadBaskets: (loadId) => listPendingMachineLoadBasketsStmt.all(loadId),
     findActiveBasketCatalogQr: (qrCode) => findActiveBasketCatalogQrStmt.get(qrCode),
@@ -299,7 +323,11 @@ function createSqliteWorkflowRepository(db) {
     markMachineLoadCompletedIfEmpty: ({ loadId, timestamp }) => markMachineLoadCompletedIfEmptyStmt.run(timestamp, loadId, loadId),
     countPendingMachineLoadBaskets: (loadId) => Number(countPendingMachineLoadBasketsStmt.get(loadId)?.pending_count || 0),
     listMachineLoadBasketOrderRefs: (loadId) => listMachineLoadBasketOrderRefsStmt.all(loadId),
-    cancelMachineLoad: ({ loadId, actor, timestamp }) => cancelMachineLoadStmt.run(actor, timestamp, timestamp, loadId)
+    cancelMachineLoad: ({ loadId, actor, timestamp }) => cancelMachineLoadStmt.run(actor, timestamp, timestamp, loadId),
+    findOrderPublicId: (orderId) => findOrderPublicIdStmt.get(orderId),
+    getPickupScanOrderState: (orderId) => getPickupScanOrderStateStmt.get(orderId),
+    hasPickupHandoverConfirmation: (orderId) => Boolean(hasPickupHandoverConfirmationStmt.get(orderId)),
+    hasBasketPickupOkScan: ({ orderId, basketId }) => Boolean(hasBasketPickupOkScanStmt.get(orderId, basketId))
   };
 }
 

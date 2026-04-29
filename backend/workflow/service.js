@@ -866,6 +866,18 @@ function createWorkflowService(options) {
     };
   }
 
+  function insertScanEvent(orderId, basketId, station, actor, result, message, timestamp) {
+    workflowRepository.insertScanEvent({
+      orderId,
+      basketId,
+      station,
+      actor,
+      result,
+      message,
+      timestamp
+    });
+  }
+
   function scanBasket(station, qrCode, actor, options = {}) {
     const basket = getBasketWithOrderByQr(qrCode);
 
@@ -885,17 +897,14 @@ function createWorkflowService(options) {
       && expectedOrderId > 0
       && expectedOrderId !== orderId
     ) {
-      const expectedOrder = db.prepare("SELECT public_id FROM orders WHERE id = ?").get(expectedOrderId);
+      const expectedOrder = workflowRepository.findOrderPublicId(expectedOrderId);
       const expectedOrderPublicId = String(expectedOrder?.public_id || "").trim();
       const actualOrderPublicId = String(basket.public_id || "").trim();
       const mismatchMessage = expectedOrderPublicId
         ? `Скан относится к ${actualOrderPublicId || "другому заказу"}, а выбран ${expectedOrderPublicId}. Завершите выбранный заказ или переключите его в выдаче.`
         : "Скан относится к другому заказу. Сначала переключите выбранный заказ в выдаче.";
 
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'error', ?, ?)
-      `).run(orderId, basket.id, station, actor, mismatchMessage, timestamp);
+      insertScanEvent(orderId, basket.id, station, actor, "error", mismatchMessage, timestamp);
 
       return {
         status: 409,
@@ -907,14 +916,12 @@ function createWorkflowService(options) {
     }
 
     if (basket.status !== basket.station) {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'error', ?, ?)
-      `).run(
+      insertScanEvent(
         orderId,
         basket.id,
         station,
         actor,
+        "error",
         "Скан отклонён: неконсистентное состояние корзины (status != station).",
         timestamp
       );
@@ -931,14 +938,12 @@ function createWorkflowService(options) {
     if (station === "qc" && basket.basket_kind !== "rework") {
       const pendingRequests = listPendingReworkRequestsByBasketId(basket.id);
       if (pendingRequests.length) {
-        db.prepare(`
-          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-          VALUES (?, ?, ?, ?, 'error', ?, ?)
-        `).run(
+        insertScanEvent(
           orderId,
           basket.id,
           station,
           actor,
+          "error",
           "QC не завершен: есть незавершенный кейс доработки по этой корзине.",
           timestamp
         );
@@ -954,10 +959,7 @@ function createWorkflowService(options) {
     }
 
     if (basket.station !== station) {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'error', ?, ?)
-      `).run(orderId, basket.id, station, actor, `Корзина относится к станции ${getStationLabel(basket.station)}.`, timestamp);
+      insertScanEvent(orderId, basket.id, station, actor, "error", `Корзина относится к станции ${getStationLabel(basket.station)}.`, timestamp);
 
       return {
         status: 409,
@@ -971,10 +973,7 @@ function createWorkflowService(options) {
       // status is enforced later for placement and handover confirmation.
       const pickupInvariant = validatePickupInvariantState(orderId);
       if (!pickupInvariant.ok) {
-        db.prepare(`
-          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-          VALUES (?, ?, ?, ?, 'error', ?, ?)
-        `).run(orderId, basket.id, station, actor, pickupInvariant.error, timestamp);
+        insertScanEvent(orderId, basket.id, station, actor, "error", pickupInvariant.error, timestamp);
 
         return {
           status: pickupInvariant.status,
@@ -985,26 +984,11 @@ function createWorkflowService(options) {
         };
       }
 
-      const pickupOrder = db.prepare(`
-        SELECT status, ready_to_place, ready_for_pickup
-        FROM orders
-        WHERE id = ?
-      `).get(orderId);
-      const handoverConfirmed = db.prepare(`
-        SELECT 1 AS ok
-        FROM scan_events
-        WHERE order_id = ?
-          AND station = 'pickup'
-          AND result = 'ok'
-          AND message LIKE 'Выдача подтверждена.%'
-        LIMIT 1
-      `).get(orderId);
+      const pickupOrder = workflowRepository.getPickupScanOrderState(orderId);
+      const handoverConfirmed = workflowRepository.hasPickupHandoverConfirmation(orderId);
       if (!pickupOrder || handoverConfirmed) {
         const blockedMessage = "Выдача по заказу уже подтверждена. Обновите экран.";
-        db.prepare(`
-          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-          VALUES (?, ?, ?, ?, 'error', ?, ?)
-        `).run(orderId, basket.id, station, actor, blockedMessage, timestamp);
+        insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
 
         return {
           status: 409,
@@ -1016,10 +1000,7 @@ function createWorkflowService(options) {
       }
       if (Boolean(pickupOrder.ready_for_pickup)) {
         const blockedMessage = "Заказ уже размещен и ожидает выдачи.";
-        db.prepare(`
-          INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-          VALUES (?, ?, ?, ?, 'error', ?, ?)
-        `).run(orderId, basket.id, station, actor, blockedMessage, timestamp);
+        insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
         return {
           status: 409,
           payload: {
@@ -1029,15 +1010,7 @@ function createWorkflowService(options) {
         };
       }
 
-      const alreadyScanned = db.prepare(`
-        SELECT 1 AS ok
-        FROM scan_events
-        WHERE order_id = ?
-          AND basket_id = ?
-          AND station = 'pickup'
-          AND result = 'ok'
-        LIMIT 1
-      `).get(orderId, basket.id);
+      const alreadyScanned = workflowRepository.hasBasketPickupOkScan({ orderId, basketId: basket.id });
       if (alreadyScanned) {
         const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
         const pickupProgress = pickupSync.progress;
@@ -1062,10 +1035,7 @@ function createWorkflowService(options) {
         };
       }
 
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'ok', ?, ?)
-      `).run(orderId, basket.id, station, actor, "BIN принят в сборку заказа на выдачу.", timestamp);
+      insertScanEvent(orderId, basket.id, station, actor, "ok", "BIN принят в сборку заказа на выдачу.", timestamp);
 
       const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
       const pickupProgress = pickupSync.progress;
@@ -1091,22 +1061,16 @@ function createWorkflowService(options) {
     }
 
     if (station === reworkStation) {
-      db.prepare(`
-        UPDATE baskets
-        SET station = 'qc', status = 'qc', updated_at = ?
-        WHERE id = ?
-      `).run(timestamp, basket.id);
+      workflowRepository.moveBasketToStation({ basketId: basket.id, station: "qc", timestamp });
 
       refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'ok', ?, ?)
-      `).run(
+      insertScanEvent(
         orderId,
         basket.id,
         station,
         actor,
+        "ok",
         `Корзина доработана и возвращена на станцию ${getStationLabel("qc")}.`,
         timestamp
       );
@@ -1127,14 +1091,12 @@ function createWorkflowService(options) {
     }
 
     if (station === "sorting") {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, ?, ?, 'error', ?, ?)
-      `).run(
+      insertScanEvent(
         orderId,
         basket.id,
         station,
         actor,
+        "error",
         "На сортировке QR-скан не используется. Откройте заказ и запустите сортировку из модалки.",
         timestamp
       );
@@ -1154,18 +1116,11 @@ function createWorkflowService(options) {
     }
 
     const nextStation = productionFlow[currentIndex + 1];
-    db.prepare(`
-      UPDATE baskets
-      SET station = ?, status = ?, updated_at = ?
-      WHERE id = ?
-    `).run(nextStation, nextStation, timestamp, basket.id);
+    workflowRepository.moveBasketToStation({ basketId: basket.id, station: nextStation, timestamp });
 
     refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `).run(orderId, basket.id, station, actor, `Basket moved to ${getStationLabel(nextStation)} station.`, timestamp);
+    insertScanEvent(orderId, basket.id, station, actor, "ok", `Basket moved to ${getStationLabel(nextStation)} station.`, timestamp);
 
     return {
       status: 200,

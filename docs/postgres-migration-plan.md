@@ -24,6 +24,7 @@
 - Machine unload reads уже вынесены в SQLite workflow repository.
 - Machine unload writes уже вынесены в SQLite workflow repository.
 - Machine cancel reads/writes уже вынесены в SQLite workflow repository.
+- Workflow scan basket reads/writes уже частично вынесены в SQLite workflow repository.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -75,6 +76,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 - machine unload reads
 - machine unload writes
 - machine cancel reads/writes
+- workflow scan basket reads/writes
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads
