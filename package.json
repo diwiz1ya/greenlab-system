@@ -17,6 +17,7 @@
     "test:all": "node scripts/test-all.js",
     "backup:db": "node scripts/backup-db.js",
     "restore:db": "node scripts/restore-db.js --latest",
+    "db:doctor": "node scripts/db-doctor.js",
     "rotate:logs": "node scripts/rotate-logs.js",
     "monitor:health": "node scripts/monitor-health.js",
     "seed:scenario": "node scripts/seed-scenarios.js",

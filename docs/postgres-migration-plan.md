@@ -1,0 +1,38 @@
+# PostgreSQL Migration Plan
+
+Цель: перейти с локального SQLite на PostgreSQL без остановки разработки и без скрытого риска для тестирования.
+
+## Текущее состояние
+
+- Приложение открывает БД через `backend/db`.
+- SQLite-схема вынесена в `backend/db/sqlite-schema.js`.
+- `GREENLAB_DB_CLIENT=sqlite` остается рабочим режимом по умолчанию.
+- `GREENLAB_DB_CLIENT=postgres` намеренно не запускает приложение, пока запросы не переведены на асинхронный PostgreSQL-адаптер.
+
+## Почему нужен поэтапный переход
+
+Сейчас backend-код напрямую использует синхронный контракт:
+
+```js
+db.prepare(sql).get(...)
+db.prepare(sql).all(...)
+db.prepare(sql).run(...)
+db.exec(sql)
+```
+
+Обычный PostgreSQL-драйвер для Node работает через `await pool.query(...)`. Поэтому простая замена драйвера сломает маршруты, транзакции и обработчики ошибок. Нужен слой репозиториев или адаптеров, после чего маршруты можно переводить контролируемо.
+
+## Безопасные этапы
+
+1. Зафиксировать SQLite как текущий runtime и держать тесты зелеными.
+2. Вынести SQL по доменам: auth, orders, workflow, pickup, cleancloud, security.
+3. Добавить PostgreSQL-схему и миграции с отдельной тестовой БД.
+4. Перевести сервисы на асинхронный контракт.
+5. Прогнать workflow smoke-тесты на SQLite и PostgreSQL.
+6. Только после этого включать `GREENLAB_DB_CLIENT=postgres` для staging/production.
+
+## Что не делать
+
+- Не ставить `GREENLAB_DB_CLIENT=postgres` на текущем runtime.
+- Не подключать PostgreSQL только в `server.js`, оставляя остальной код на `db.prepare(...)`.
+- Не смешивать демо-данные и production-данные в одной базе.

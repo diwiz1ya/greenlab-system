@@ -51,6 +51,16 @@ npm start
 - `GREENLAB_TRUST_PROXY` - доверять `x-forwarded-for` для IP/рейта (`false` по умолчанию)
 - `GREENLAB_DEMO_RESET_ON_BOOT` - сбрасывать демо-данные на старте (`false` по умолчанию)
 
+## База данных
+
+Текущий runtime использует SQLite. Это нормальный режим для демо, локального тестирования и MVP:
+
+- `GREENLAB_DB_CLIENT=sqlite` - значение по умолчанию
+- `GREENLAB_DB_PATH=...` - путь к SQLite-файлу, по умолчанию `data/greenlab-demo.sqlite`
+- `npm run db:doctor` - быстрая проверка выбранного режима БД
+
+PostgreSQL выделен как следующий production-шаг, но его нельзя включить одной переменной без переписывания слоя запросов: текущие сервисы используют синхронный контракт `db.prepare(...).get/all/run`, а PostgreSQL-драйвер в Node работает асинхронно. Поэтому `GREENLAB_DB_CLIENT=postgres` сейчас останавливает запуск с понятным сообщением, чтобы случайно не получить полурабочую боевую конфигурацию.
+
 Новые API для менеджера:
 
 - `GET /api/sync-queue` - очередь + summary (`pending/processing/processed/failed`)
