@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { createPostgresCoreRepository } = require("../backend/db/postgres-core-repository");
+const { createPostgresDemoSeedRepository } = require("../backend/db/postgres-demo-seed-repository");
 const { createPostgresIdempotencyRepository } = require("../backend/db/postgres-idempotency-repository");
 const { createPostgresScanRepository } = require("../backend/db/postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("../backend/db/postgres-security-event-repository");
@@ -158,6 +159,113 @@ function createFakeQueryable(results = []) {
   assert.deepEqual(scanDb.calls[2].params, ["washing", 20]);
   assert.match(scanDb.calls[0].sql, /WHERE se\.order_id = \$1/);
   assert.match(scanDb.calls[2].sql, /WHERE se\.station = \$1/);
+
+  const seedDb = createFakeQueryable([
+    { rows: [], rowCount: 4 },
+    { rows: [{ id: 1, username: "manager", allowed_stations: "[]" }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ id: 1 }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ count: 8 }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 13 },
+    { rows: [], rowCount: 1 }
+  ]);
+  const seedRepository = createPostgresDemoSeedRepository(seedDb);
+  await seedRepository.normalizeLegacyData();
+  assert.deepEqual(await seedRepository.listUsersAllowedStations(), [
+    { id: 1, username: "manager", allowed_stations: "[]" }
+  ]);
+  assert.deepEqual(await seedRepository.updateAllowedStations(1, "[\"overview\"]"), { changes: 1 });
+  assert.equal(await seedRepository.userExists("manager"), true);
+  assert.deepEqual(
+    await seedRepository.insertUser({
+      username: "manager",
+      password: "[redacted]",
+      passwordHash: "hash",
+      displayName: "Branch manager",
+      role: "manager",
+      allowedStationsJson: "[\"overview\"]"
+    }),
+    { changes: 1 }
+  );
+  assert.equal(await seedRepository.countUsers(), 8);
+  assert.deepEqual(
+    await seedRepository.upsertMachine({
+      code: "W01",
+      station: "washing",
+      type: "washer",
+      displayName: "Washer 01",
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await seedRepository.upsertBasketCatalogEntry({
+      label: "BIN-001",
+      qrCode: "QR:BIN-001",
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await seedRepository.upsertPickupLocation({
+      label: "PICKUP-001",
+      qrCode: "QR:PICKUP-001",
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  await seedRepository.clearDemoData();
+  assert.deepEqual(
+    await seedRepository.insertOrder({
+      publicId: "GL-2601",
+      cleanCloudOrderId: "CC-2601",
+      customerName: "Dian Saputra",
+      customerId: null,
+      orderWeight: 4.4,
+      customerPhone: "+62 812 2601",
+      customerEmail: null,
+      serviceTier: "Premium",
+      status: "sorting",
+      cleanCloudStatus: "sorting",
+      readyForPickup: 0,
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.match(seedDb.calls[0].sql, /UPDATE orders SET status = 'qc'/);
+  assert.deepEqual(seedDb.calls[2].params, ["[\"overview\"]", 1]);
+  assert.deepEqual(seedDb.calls[3].params, ["manager"]);
+  assert.deepEqual(seedDb.calls[4].params, [
+    "manager",
+    "[redacted]",
+    "hash",
+    "Branch manager",
+    "manager",
+    "[\"overview\"]"
+  ]);
+  assert.match(seedDb.calls[6].sql, /ON CONFLICT\(machine_code\)/);
+  assert.match(seedDb.calls[7].sql, /ON CONFLICT\(label\)/);
+  assert.match(seedDb.calls[9].sql, /DELETE FROM webhook_events/);
+  assert.deepEqual(seedDb.calls[10].params, [
+    "GL-2601",
+    "CC-2601",
+    "Dian Saputra",
+    null,
+    4.4,
+    "+62 812 2601",
+    null,
+    "Premium",
+    "sorting",
+    "sorting",
+    0,
+    "2026-04-29T08:00:00.000Z",
+    "2026-04-29T08:00:00.000Z"
+  ]);
+  assert.match(seedDb.calls[10].sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13\)/);
 
   console.log("PostgreSQL repository tests: OK");
 })().catch((error) => {
