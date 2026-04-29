@@ -136,6 +136,7 @@ const { db, client: DB_CLIENT } = openDatabase({
 });
 const {
   coreRepository,
+  idempotencyRepository,
   pickupWorkbenchRepository,
   scanRepository,
   securityEventRepository,
@@ -729,20 +730,14 @@ async function runIdempotentOperation(req, options = {}) {
   const nowStamp = now.toISOString();
   const expiresAt = addHoursIso(now, IDEMPOTENCY_TTL_HOURS);
 
-  db.prepare(`
-    DELETE FROM idempotency_records
-    WHERE expires_at <= ?
-  `).run(nowStamp);
+  idempotencyRepository.purgeExpired(nowStamp);
 
-  const cached = db.prepare(`
-    SELECT status_code, response_json
-    FROM idempotency_records
-    WHERE idem_key = ?
-      AND route_key = ?
-      AND actor = ?
-      AND expires_at > ?
-    LIMIT 1
-  `).get(key, routeKey, actor, nowStamp);
+  const cached = idempotencyRepository.findCachedRecord({
+    key,
+    routeKey,
+    actor,
+    nowStamp
+  });
 
   if (cached?.response_json) {
     try {
@@ -758,16 +753,15 @@ async function runIdempotentOperation(req, options = {}) {
     : (result?.error ? 400 : 200);
   const responseJson = JSON.stringify(result || {});
 
-  db.prepare(`
-    INSERT INTO idempotency_records (
-      idem_key, route_key, actor, status_code, response_json, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(idem_key, route_key, actor) DO UPDATE SET
-      status_code = excluded.status_code,
-      response_json = excluded.response_json,
-      created_at = excluded.created_at,
-      expires_at = excluded.expires_at
-  `).run(key, routeKey, actor, statusCode, responseJson, nowStamp, expiresAt);
+  idempotencyRepository.saveRecord({
+    key,
+    routeKey,
+    actor,
+    statusCode,
+    responseJson,
+    nowStamp,
+    expiresAt
+  });
 
   return result;
 }

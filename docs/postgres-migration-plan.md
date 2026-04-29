@@ -12,6 +12,7 @@
 - Прямые `last_insert_rowid()` убраны из workflow-кода.
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
+- Idempotency records уже вызываются через repository factory `backend/db/repositories.js`.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -51,6 +52,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 Первым шагом этот repository слой уже начат для:
 
 - login/user password hash migration
+- idempotency record cache
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads
