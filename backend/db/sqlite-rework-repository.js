@@ -1,3 +1,5 @@
+const { getLastInsertRowId } = require("./statement-result");
+
 function createSqliteReworkRepository(db) {
   const listBasketImagesStmt = db.prepare(`
     SELECT id, image_role, sort_order, note, public_url, created_at
@@ -127,6 +129,35 @@ function createSqliteReworkRepository(db) {
     INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
     VALUES (?, ?, 'qc', ?, 'error', ?, ?)
   `);
+  const insertPendingReworkRequestStmt = db.prepare(`
+    INSERT INTO rework_requests (
+      order_id, source_basket_id, item_category, item_label, quantity,
+      source_image_id, source_image_url, source_image_note, qc_photo_path, qc_photo_url,
+      reason_code, service_label, extra_days, request_status,
+      requested_by, requested_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const getReworkRequestByIdStmt = db.prepare(`
+    SELECT
+      rr.*,
+      source.basket_code AS source_basket_code,
+      rework.basket_code AS rework_basket_code,
+      rework.qr_code AS rework_basket_qr_code
+    FROM rework_requests rr
+    JOIN baskets source ON source.id = rr.source_basket_id
+    LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
+    WHERE rr.id = ?
+  `);
+  const updateBasketStationStatusStmt = db.prepare(`
+    UPDATE baskets
+    SET station = ?, status = ?, updated_at = ?
+    WHERE id = ?
+  `);
+  const insertScanOkEventStmt = db.prepare(`
+    INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+    VALUES (?, ?, ?, ?, 'ok', ?, ?)
+  `);
 
   return {
     listBasketImages: (basketId) => listBasketImagesStmt.all(basketId),
@@ -144,6 +175,58 @@ function createSqliteReworkRepository(db) {
     insertQcScanErrorEvent: ({ orderId, basketId, actor, message, timestamp }) => insertQcScanErrorEventStmt.run(
       orderId,
       basketId,
+      actor,
+      message,
+      timestamp
+    ),
+    createPendingReworkRequest: ({
+      orderId,
+      sourceBasketId,
+      itemCategory,
+      itemLabel,
+      quantity,
+      selectedImage,
+      qcPhoto,
+      reasonCode,
+      serviceLabel,
+      extraDays,
+      requestStatus,
+      actor,
+      timestamp
+    }) => {
+      const result = insertPendingReworkRequestStmt.run(
+        orderId,
+        sourceBasketId,
+        itemCategory,
+        itemLabel,
+        quantity,
+        selectedImage?.id || null,
+        selectedImage?.public_url || null,
+        selectedImage?.note || null,
+        qcPhoto?.filePath || null,
+        qcPhoto?.publicUrl || null,
+        reasonCode,
+        serviceLabel,
+        extraDays,
+        requestStatus,
+        actor,
+        timestamp,
+        timestamp,
+        timestamp
+      );
+      return getLastInsertRowId(result, "rework request");
+    },
+    getReworkRequestById: (requestId) => getReworkRequestByIdStmt.get(requestId),
+    updateBasketStationStatus: ({ basketId, station, status, timestamp }) => updateBasketStationStatusStmt.run(
+      station,
+      status,
+      timestamp,
+      basketId
+    ),
+    insertScanOkEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanOkEventStmt.run(
+      orderId,
+      basketId,
+      station,
       actor,
       message,
       timestamp

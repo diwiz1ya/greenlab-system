@@ -734,67 +734,41 @@ function createReworkWorkflow(options) {
         };
       }
     }
-    const insertReworkRequestResult = db.prepare(`
-      INSERT INTO rework_requests (
-        order_id, source_basket_id, item_category, item_label, quantity,
-        source_image_id, source_image_url, source_image_note, qc_photo_path, qc_photo_url,
-        reason_code, service_label, extra_days, request_status,
-        requested_by, requested_at, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      basket.order_id,
-      basket.id,
+    const requestId = reworkRepository.createPendingReworkRequest({
+      orderId: basket.order_id,
+      sourceBasketId: basket.id,
       itemCategory,
       itemLabel,
       quantity,
-      selectedImage?.id || null,
-      selectedImage?.public_url || null,
-      selectedImage?.note || null,
-      qcPhoto?.filePath || null,
-      qcPhoto?.publicUrl || null,
-      reason,
-      serviceDetails.serviceLabel,
-      serviceDetails.extraDays,
-      pendingCustomerApprovalStatus,
+      selectedImage,
+      qcPhoto,
+      reasonCode: reason,
+      serviceLabel: serviceDetails.serviceLabel,
+      extraDays: serviceDetails.extraDays,
+      requestStatus: pendingCustomerApprovalStatus,
       actor,
-      timestamp,
-      timestamp,
       timestamp
-    );
+    });
 
-    const requestId = getLastInsertRowId(insertReworkRequestResult, "rework request");
-    const request = buildReworkRequestPayload(db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      WHERE rr.id = ?
-    `).get(requestId));
+    const request = buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId));
 
-    db.prepare(`
-      UPDATE baskets
-      SET station = ?, status = ?, updated_at = ?
-      WHERE id = ?
-    `).run(customerApprovalStation, customerApprovalStation, timestamp, basket.id);
+    reworkRepository.updateBasketStationStatus({
+      basketId: basket.id,
+      station: customerApprovalStation,
+      status: customerApprovalStation,
+      timestamp
+    });
 
     refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `).run(
+    reworkRepository.insertScanOkEvent({
       orderId,
-      basket.id,
-      customerApprovalStation,
+      basketId: basket.id,
+      station: customerApprovalStation,
       actor,
-      `Корзина переведена в ожидание согласования клиента (${serviceDetails.serviceLabel}, +${serviceDetails.extraDays} day).`,
+      message: `Корзина переведена в ожидание согласования клиента (${serviceDetails.serviceLabel}, +${serviceDetails.extraDays} day).`,
       timestamp
-    );
+    });
 
     return {
       status: 200,
