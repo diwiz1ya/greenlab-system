@@ -1165,12 +1165,7 @@ function createWorkflowService(options) {
   }
 
   function placeOrderForPickup(orderId, containerCountRaw, placementsRaw, actor) {
-    const order = db.prepare(`
-      SELECT id, public_id, cleancloud_order_id, status, ready_to_place, ready_for_pickup
-      FROM orders
-      WHERE id = ?
-      LIMIT 1
-    `).get(orderId);
+    const order = workflowRepository.findPickupPlacementOrder(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
@@ -1245,65 +1240,19 @@ function createWorkflowService(options) {
       usedLocations.add(placement.locationQrCode);
     }
 
-    const findBinCatalogEntry = db.prepare(`
-      SELECT id, label
-      FROM basket_catalog
-      WHERE qr_code = ?
-        AND is_active = 1
-      LIMIT 1
-    `);
-    const findLocationCatalogEntry = db.prepare(`
-      SELECT id, label
-      FROM pickup_locations
-      WHERE qr_code = ?
-        AND is_active = 1
-      LIMIT 1
-    `);
-    const findActivePlacementByBin = db.prepare(`
-      SELECT p.order_id, o.public_id
-      FROM pickup_order_placements p
-      JOIN orders o ON o.id = p.order_id
-      WHERE p.bin_qr_code = ?
-        AND p.released_at IS NULL
-      LIMIT 1
-    `);
-    const findActivePlacementByLocation = db.prepare(`
-      SELECT p.order_id, o.public_id
-      FROM pickup_order_placements p
-      JOIN orders o ON o.id = p.order_id
-      WHERE p.location_qr_code = ?
-        AND p.released_at IS NULL
-      LIMIT 1
-    `);
-    const findActiveBasketByQr = db.prepare(`
-      SELECT b.id, b.station, o.public_id
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-        AND b.status != 'archived'
-        AND NOT (
-          o.status = 'pickup'
-          AND (
-            COALESCE(o.ready_to_place, 0) = 1
-            OR COALESCE(o.ready_for_pickup, 0) = 1
-          )
-        )
-      LIMIT 1
-    `);
-
     for (const placement of placements) {
-      const catalogBin = findBinCatalogEntry.get(placement.binQrCode);
+      const catalogBin = workflowRepository.findBinCatalogEntry(placement.binQrCode);
       if (!catalogBin) {
         return { error: `BIN ${placement.binQrCode} отсутствует в пуле пустых корзин.`, status: 400 };
       }
-      const basketInUse = findActiveBasketByQr.get(placement.binQrCode);
+      const basketInUse = workflowRepository.findActiveBasketByQrForPickupPlacement(placement.binQrCode);
       if (basketInUse) {
         return {
           error: `BIN ${placement.binQrCode} занят заказом ${basketInUse.public_id} (${getStationLabel(basketInUse.station)}).`,
           status: 409
         };
       }
-      const activeBinPlacement = findActivePlacementByBin.get(placement.binQrCode);
+      const activeBinPlacement = workflowRepository.findActivePickupPlacementByBin(placement.binQrCode);
       if (activeBinPlacement) {
         return {
           error: `BIN ${placement.binQrCode} уже закреплен за заказом ${activeBinPlacement.public_id}.`,
@@ -1311,11 +1260,11 @@ function createWorkflowService(options) {
         };
       }
 
-      const catalogLocation = findLocationCatalogEntry.get(placement.locationQrCode);
+      const catalogLocation = workflowRepository.findPickupLocationCatalogEntry(placement.locationQrCode);
       if (!catalogLocation) {
         return { error: `LOC ${placement.locationQrCode} не найдена в каталоге.`, status: 400 };
       }
-      const activeLocationPlacement = findActivePlacementByLocation.get(placement.locationQrCode);
+      const activeLocationPlacement = workflowRepository.findActivePickupPlacementByLocation(placement.locationQrCode);
       if (activeLocationPlacement) {
         return {
           error: `LOC ${placement.locationQrCode} уже занята заказом ${activeLocationPlacement.public_id}.`,
@@ -1325,47 +1274,24 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    const releaseOrderPlacements = db.prepare(`
-      UPDATE pickup_order_placements
-      SET released_at = ?, released_by = ?, updated_at = ?
-      WHERE order_id = ?
-        AND released_at IS NULL
-    `);
-    const insertOrderPlacement = db.prepare(`
-      INSERT INTO pickup_order_placements (
-        order_id, slot_index, bin_qr_code, location_qr_code, placed_by, placed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const updateOrderPlacedState = db.prepare(`
-      UPDATE orders
-      SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = ?
-      WHERE id = ?
-    `);
-    const insertScanEvent = db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'pickup', ?, 'ok', ?, ?)
-    `);
-
     try {
       runImmediateTransaction(db, () => {
-        releaseOrderPlacements.run(timestamp, actor, timestamp, orderId);
+        workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
         for (const placement of placements) {
-          insertOrderPlacement.run(
+          workflowRepository.insertPickupOrderPlacement({
             orderId,
-            placement.slotIndex,
-            placement.binQrCode,
-            placement.locationQrCode,
+            slotIndex: placement.slotIndex,
+            binQrCode: placement.binQrCode,
+            locationQrCode: placement.locationQrCode,
             actor,
-            timestamp,
-            timestamp,
             timestamp
-          );
+          });
         }
-        updateOrderPlacedState.run(timestamp, orderId);
+        workflowRepository.markOrderPlacedForPickup({ orderId, timestamp });
         const placementSummary = placements
           .map((placement) => `${placement.binQrCode} -> ${placement.locationQrCode}`)
           .join("; ");
-        insertScanEvent.run(orderId, actor, `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
+        insertScanEvent(orderId, null, "pickup", actor, "ok", `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
       });
     } catch (error) {
       return { error: error?.message || "Не удалось закрепить заказ за ячейкой выдачи.", status: 500 };

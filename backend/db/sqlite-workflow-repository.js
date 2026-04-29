@@ -310,6 +310,73 @@ function createSqliteWorkflowRepository(db) {
     SET status = 'washing', cleancloud_status = 'В работе', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
     WHERE id = ?
   `);
+  const findPickupPlacementOrderStmt = db.prepare(`
+    SELECT id, public_id, cleancloud_order_id, status, ready_to_place, ready_for_pickup
+    FROM orders
+    WHERE id = ?
+    LIMIT 1
+  `);
+  const findBinCatalogEntryStmt = db.prepare(`
+    SELECT id, label
+    FROM basket_catalog
+    WHERE qr_code = ?
+      AND is_active = 1
+    LIMIT 1
+  `);
+  const findPickupLocationCatalogEntryStmt = db.prepare(`
+    SELECT id, label
+    FROM pickup_locations
+    WHERE qr_code = ?
+      AND is_active = 1
+    LIMIT 1
+  `);
+  const findActivePickupPlacementByBinStmt = db.prepare(`
+    SELECT p.order_id, o.public_id
+    FROM pickup_order_placements p
+    JOIN orders o ON o.id = p.order_id
+    WHERE p.bin_qr_code = ?
+      AND p.released_at IS NULL
+    LIMIT 1
+  `);
+  const findActivePickupPlacementByLocationStmt = db.prepare(`
+    SELECT p.order_id, o.public_id
+    FROM pickup_order_placements p
+    JOIN orders o ON o.id = p.order_id
+    WHERE p.location_qr_code = ?
+      AND p.released_at IS NULL
+    LIMIT 1
+  `);
+  const findActiveBasketByQrForPickupPlacementStmt = db.prepare(`
+    SELECT b.id, b.station, o.public_id
+    FROM baskets b
+    JOIN orders o ON o.id = b.order_id
+    WHERE b.qr_code = ?
+      AND b.status != 'archived'
+      AND NOT (
+        o.status = 'pickup'
+        AND (
+          COALESCE(o.ready_to_place, 0) = 1
+          OR COALESCE(o.ready_for_pickup, 0) = 1
+        )
+      )
+    LIMIT 1
+  `);
+  const releaseActivePickupOrderPlacementsStmt = db.prepare(`
+    UPDATE pickup_order_placements
+    SET released_at = ?, released_by = ?, updated_at = ?
+    WHERE order_id = ?
+      AND released_at IS NULL
+  `);
+  const insertPickupOrderPlacementStmt = db.prepare(`
+    INSERT INTO pickup_order_placements (
+      order_id, slot_index, bin_qr_code, location_qr_code, placed_by, placed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const markOrderPlacedForPickupStmt = db.prepare(`
+    UPDATE orders
+    SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = ?
+    WHERE id = ?
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -349,7 +416,18 @@ function createSqliteWorkflowRepository(db) {
     findHoldOrderById: (orderId) => findHoldOrderByIdStmt.get(orderId),
     countBasketsByOrder: (orderId) => Number(countBasketsByOrderStmt.get(orderId)?.count || 0),
     moveHoldBasketsToWashing: ({ orderId, holdStation, timestamp }) => moveHoldBasketsToWashingStmt.run(timestamp, orderId, holdStation, holdStation),
-    releaseHoldOrderToWashing: ({ orderId, timestamp }) => releaseHoldOrderToWashingStmt.run(timestamp, orderId)
+    releaseHoldOrderToWashing: ({ orderId, timestamp }) => releaseHoldOrderToWashingStmt.run(timestamp, orderId),
+    findPickupPlacementOrder: (orderId) => findPickupPlacementOrderStmt.get(orderId),
+    findBinCatalogEntry: (qrCode) => findBinCatalogEntryStmt.get(qrCode),
+    findPickupLocationCatalogEntry: (qrCode) => findPickupLocationCatalogEntryStmt.get(qrCode),
+    findActivePickupPlacementByBin: (qrCode) => findActivePickupPlacementByBinStmt.get(qrCode),
+    findActivePickupPlacementByLocation: (qrCode) => findActivePickupPlacementByLocationStmt.get(qrCode),
+    findActiveBasketByQrForPickupPlacement: (qrCode) => findActiveBasketByQrForPickupPlacementStmt.get(qrCode),
+    releaseActivePickupOrderPlacements: ({ orderId, actor, timestamp }) => releaseActivePickupOrderPlacementsStmt.run(timestamp, actor, timestamp, orderId),
+    insertPickupOrderPlacement: ({ orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp }) => (
+      insertPickupOrderPlacementStmt.run(orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp, timestamp, timestamp)
+    ),
+    markOrderPlacedForPickup: ({ orderId, timestamp }) => markOrderPlacedForPickupStmt.run(timestamp, orderId)
   };
 }
 
