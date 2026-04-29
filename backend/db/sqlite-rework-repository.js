@@ -154,9 +154,22 @@ function createSqliteReworkRepository(db) {
     SET station = ?, status = ?, updated_at = ?
     WHERE id = ?
   `);
+  const updateBasketStationStatusIfCurrentStmt = db.prepare(`
+    UPDATE baskets
+    SET station = ?, status = ?, updated_at = ?
+    WHERE id = ?
+      AND station = ?
+      AND status = ?
+  `);
   const insertScanOkEventStmt = db.prepare(`
     INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
     VALUES (?, ?, ?, ?, 'ok', ?, ?)
+  `);
+  const updateReworkRequestDecisionStmt = db.prepare(`
+    UPDATE rework_requests
+    SET request_status = ?, decision_actor = ?, decision_at = ?, decision_note = ?, updated_at = ?
+    WHERE id = ?
+      AND request_status = ?
   `);
 
   return {
@@ -223,6 +236,21 @@ function createSqliteReworkRepository(db) {
       timestamp,
       basketId
     ),
+    updateBasketStationStatusIfCurrent: ({
+      basketId,
+      station,
+      status,
+      timestamp,
+      expectedStation,
+      expectedStatus
+    }) => updateBasketStationStatusIfCurrentStmt.run(
+      station,
+      status,
+      timestamp,
+      basketId,
+      expectedStation,
+      expectedStatus
+    ),
     insertScanOkEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanOkEventStmt.run(
       orderId,
       basketId,
@@ -230,6 +258,22 @@ function createSqliteReworkRepository(db) {
       actor,
       message,
       timestamp
+    ),
+    updateReworkRequestDecision: ({
+      requestId,
+      requestStatus,
+      actor,
+      timestamp,
+      decisionNote,
+      expectedStatus
+    }) => updateReworkRequestDecisionStmt.run(
+      requestStatus,
+      actor,
+      timestamp,
+      decisionNote,
+      timestamp,
+      requestId,
+      expectedStatus
     )
   };
 }

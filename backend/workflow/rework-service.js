@@ -804,71 +804,46 @@ function createReworkWorkflow(options) {
     }
     const timestamp = nowIso();
 
-    const lockBasketInApproval = db.prepare(`
-      UPDATE baskets
-      SET station = ?, status = ?, updated_at = ?
-      WHERE id = ?
-        AND station = ?
-        AND status = ?
-    `).run(
-      customerApprovalStation,
-      customerApprovalStation,
+    const lockBasketInApproval = reworkRepository.updateBasketStationStatusIfCurrent({
+      basketId: request.source_basket_id,
+      station: customerApprovalStation,
+      status: customerApprovalStation,
       timestamp,
-      request.source_basket_id,
-      request.source_station,
-      request.source_status
-    );
+      expectedStation: request.source_station,
+      expectedStatus: request.source_status
+    });
     if (!lockBasketInApproval.changes) {
       return { error: "Состояние корзины изменилось. Обновите кейс и попробуйте снова.", status: 409 };
     }
 
-    const updateRequestAfterApprove = db.prepare(`
-      UPDATE rework_requests
-      SET request_status = ?, decision_actor = ?, decision_at = ?, decision_note = ?, updated_at = ?
-      WHERE id = ?
-        AND request_status = ?
-    `).run(
-      approvedWaitingTransferStatus,
+    const updateRequestAfterApprove = reworkRepository.updateReworkRequestDecision({
+      requestId,
+      requestStatus: approvedWaitingTransferStatus,
       actor,
       timestamp,
-      sanitizeItemLabel(decisionNote),
-      timestamp,
-      requestId,
-      pendingCustomerApprovalStatus
-    );
+      decisionNote: sanitizeItemLabel(decisionNote),
+      expectedStatus: pendingCustomerApprovalStatus
+    });
     if (!updateRequestAfterApprove.changes) {
       return { error: "Запрос уже обработан другим пользователем.", status: 409 };
     }
 
     refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `).run(
-      request.order_id,
-      request.source_basket_id,
-      customerApprovalStation,
+    reworkRepository.insertScanOkEvent({
+      orderId: request.order_id,
+      basketId: request.source_basket_id,
+      station: customerApprovalStation,
       actor,
-      "Клиент согласовал доп обработку. Ожидается физическая передача вещи в доработку на станции QC.",
+      message: "Клиент согласовал доп обработку. Ожидается физическая передача вещи в доработку на станции QC.",
       timestamp
-    );
+    });
 
     return {
       ok: true,
       message: "Клиент согласовал доп обработку. QC должен подтвердить физическую передачу вещи в доработку.",
       order: getOrderDetails(request.order_id),
-      request: buildReworkRequestPayload(db.prepare(`
-        SELECT
-          rr.*,
-          source.basket_code AS source_basket_code,
-          rework.basket_code AS rework_basket_code,
-          rework.qr_code AS rework_basket_qr_code
-        FROM rework_requests rr
-        JOIN baskets source ON source.id = rr.source_basket_id
-        LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-        WHERE rr.id = ?
-      `).get(requestId))
+      request: buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId))
     };
   }
 
@@ -892,67 +867,49 @@ function createReworkWorkflow(options) {
     const timestamp = nowIso();
 
     if (request.source_station === customerApprovalStation) {
-      const moveSourceBackToQc = db.prepare(`
-        UPDATE baskets
-        SET station = 'qc', status = 'qc', updated_at = ?
-        WHERE id = ?
-          AND station = ?
-          AND status = ?
-      `).run(timestamp, request.source_basket_id, customerApprovalStation, customerApprovalStation);
+      const moveSourceBackToQc = reworkRepository.updateBasketStationStatusIfCurrent({
+        basketId: request.source_basket_id,
+        station: "qc",
+        status: "qc",
+        timestamp,
+        expectedStation: customerApprovalStation,
+        expectedStatus: customerApprovalStation
+      });
       if (!moveSourceBackToQc.changes) {
         return { error: "Состояние корзины изменилось. Обновите кейс и попробуйте снова.", status: 409 };
       }
     }
 
-    const updateRequestAfterDecline = db.prepare(`
-      UPDATE rework_requests
-      SET request_status = ?, decision_actor = ?, decision_at = ?, decision_note = ?, updated_at = ?
-      WHERE id = ?
-        AND request_status = ?
-    `).run(
-      declinedWaitingReturnStatus,
+    const updateRequestAfterDecline = reworkRepository.updateReworkRequestDecision({
+      requestId,
+      requestStatus: declinedWaitingReturnStatus,
       actor,
       timestamp,
-      sanitizeItemLabel(decisionNote),
-      timestamp,
-      requestId,
-      pendingCustomerApprovalStatus
-    );
+      decisionNote: sanitizeItemLabel(decisionNote),
+      expectedStatus: pendingCustomerApprovalStatus
+    });
     if (!updateRequestAfterDecline.changes) {
       return { error: "Запрос уже обработан другим пользователем.", status: 409 };
     }
 
     refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `).run(
-      request.order_id,
-      request.source_basket_id,
-      customerApprovalStation,
+    reworkRepository.insertScanOkEvent({
+      orderId: request.order_id,
+      basketId: request.source_basket_id,
+      station: customerApprovalStation,
       actor,
-      request.source_station === customerApprovalStation
+      message: request.source_station === customerApprovalStation
         ? "Клиент отказался от дополнительной обработки. Нужна QC-задача: подтвердить возврат вещи в основной поток."
         : "Клиент отказался от дополнительной обработки. Нужна QC-задача: подтвердить возврат вещи в основной поток.",
       timestamp
-    );
+    });
 
     return {
       ok: true,
       message: "Клиент отказался от дополнительной обработки. QC должен подтвердить возврат вещи в основной поток.",
       order: getOrderDetails(request.order_id),
-      request: buildReworkRequestPayload(db.prepare(`
-        SELECT
-          rr.*,
-          source.basket_code AS source_basket_code,
-          rework.basket_code AS rework_basket_code,
-          rework.qr_code AS rework_basket_qr_code
-        FROM rework_requests rr
-        JOIN baskets source ON source.id = rr.source_basket_id
-        LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-        WHERE rr.id = ?
-      `).get(requestId))
+      request: buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId))
     };
   }
 
