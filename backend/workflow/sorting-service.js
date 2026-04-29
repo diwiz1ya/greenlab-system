@@ -3,6 +3,7 @@
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const { getLastInsertRowId } = require("../db/statement-result");
 const { normalizeBasketQrCode } = require("./basket-pool");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 
@@ -354,7 +355,7 @@ function createSortingWorkflow(options) {
       if (!qrCode) {
         throw new Error("Basket QR is not specified.");
       }
-      insertBasket.run(
+      const insertBasketResult = insertBasket.run(
         order.id,
         basketCode,
         basket.type,
@@ -365,7 +366,7 @@ function createSortingWorkflow(options) {
         timestamp,
         timestamp
       );
-      const basketId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+      const basketId = getLastInsertRowId(insertBasketResult, "basket");
       if (Array.isArray(basket.photos) && basket.photos.length) {
         await saveBasketPhotos(basketId, order.id, basketCode, basket.photos, timestamp);
       }

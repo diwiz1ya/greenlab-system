@@ -1,5 +1,6 @@
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
+const { runImmediateTransaction } = require("../backend/db/transaction");
 
 const PASSWORD = "demo123";
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "data", "greenlab-demo.sqlite");
@@ -154,40 +155,35 @@ function insertSortingOrders(db, count) {
   const created = [];
   let nextNumber = getNextOrderNumber(db);
 
-  db.exec("BEGIN IMMEDIATE;");
   try {
-    for (let index = 0; index < count; index += 1) {
-      const orderNumber = nextNumber + index;
-      const publicId = `GL-${orderNumber}`;
-      const cleancloudOrderId = `CC-${orderNumber}`;
-      const customerName = CUSTOMER_NAMES[index % CUSTOMER_NAMES.length];
-      const customerId = `CUS-${orderNumber}`;
-      const orderWeight = Number((2.2 + (index * 0.35)).toFixed(1));
-      const customerPhone = `+62 812 ${String(orderNumber).padStart(4, "0")}`;
-      const customerEmail = `customer${orderNumber}@greenlab.test`;
-      const serviceTier = index % 2 === 0 ? "Standard" : "Express";
+    runImmediateTransaction(db, () => {
+      for (let index = 0; index < count; index += 1) {
+        const orderNumber = nextNumber + index;
+        const publicId = `GL-${orderNumber}`;
+        const cleancloudOrderId = `CC-${orderNumber}`;
+        const customerName = CUSTOMER_NAMES[index % CUSTOMER_NAMES.length];
+        const customerId = `CUS-${orderNumber}`;
+        const orderWeight = Number((2.2 + (index * 0.35)).toFixed(1));
+        const customerPhone = `+62 812 ${String(orderNumber).padStart(4, "0")}`;
+        const customerEmail = `customer${orderNumber}@greenlab.test`;
+        const serviceTier = index % 2 === 0 ? "Standard" : "Express";
 
-      insertOrder.run(
-        publicId,
-        cleancloudOrderId,
-        customerName,
-        customerId,
-        orderWeight,
-        customerPhone,
-        customerEmail,
-        serviceTier,
-        now,
-        now
-      );
-      created.push(publicId);
-    }
-    db.exec("COMMIT;");
+        insertOrder.run(
+          publicId,
+          cleancloudOrderId,
+          customerName,
+          customerId,
+          orderWeight,
+          customerPhone,
+          customerEmail,
+          serviceTier,
+          now,
+          now
+        );
+        created.push(publicId);
+      }
+    });
   } catch (error) {
-    try {
-      db.exec("ROLLBACK;");
-    } catch {
-      // ignore rollback failure
-    }
     throw error;
   }
 

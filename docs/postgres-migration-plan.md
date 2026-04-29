@@ -8,6 +8,9 @@
 - SQLite-схема вынесена в `backend/db/sqlite-schema.js`.
 - `GREENLAB_DB_CLIENT=sqlite` остается рабочим режимом по умолчанию.
 - `GREENLAB_DB_CLIENT=postgres` намеренно не запускает приложение, пока запросы не переведены на асинхронный PostgreSQL-адаптер.
+- SQL portability audit доступен через `npm run audit:db`.
+- Прямые `last_insert_rowid()` убраны из workflow-кода.
+- Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 
 ## Почему нужен поэтапный переход
 
@@ -30,6 +33,17 @@ db.exec(sql)
 4. Перевести сервисы на асинхронный контракт.
 5. Прогнать workflow smoke-тесты на SQLite и PostgreSQL.
 6. Только после этого включать `GREENLAB_DB_CLIENT=postgres` для staging/production.
+
+## Audit baseline
+
+Текущий baseline после первого cleanup:
+
+- `npm run audit:db` - 207 findings
+- high: `9`
+- medium: `191`
+- low: `7`
+
+Оставшиеся high-блокеры в основном относятся к SQLite-only ops/demo scripts (`backup-db`, `restore-db`, `audit-workflow-state`, `seed-scenarios`) и будут заменяться отдельными PostgreSQL-командами после подключения реального PostgreSQL-драйвера.
 
 ## Что не делать
 

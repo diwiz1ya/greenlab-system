@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { getLastInsertRowId } = require("../db/statement-result");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 
 function createReworkWorkflow(options) {
@@ -496,7 +497,7 @@ function createReworkWorkflow(options) {
     const reworkItemCounts = buildSingleItemCounts(itemCategory, quantity);
     const nextSourceStation = remainingCounts.total > 0 ? "qc" : inactiveReworkSourceState;
 
-    db.prepare(`
+    const insertReworkBasketResult = db.prepare(`
       INSERT INTO baskets (
         order_id, basket_code, basket_type, basket_items_json, basket_kind, parent_basket_id,
         rework_reason, rework_attempt, station, status, qr_code, created_at, updated_at
@@ -517,7 +518,7 @@ function createReworkWorkflow(options) {
       timestamp
     );
 
-    const reworkBasketId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+    const reworkBasketId = getLastInsertRowId(insertReworkBasketResult, "rework basket");
 
     const updateSourceBasketAfterTransfer = db.prepare(`
       UPDATE baskets
@@ -850,7 +851,7 @@ function createReworkWorkflow(options) {
         };
       }
     }
-    db.prepare(`
+    const insertReworkRequestResult = db.prepare(`
       INSERT INTO rework_requests (
         order_id, source_basket_id, item_category, item_label, quantity,
         source_image_id, source_image_url, source_image_note, qc_photo_path, qc_photo_url,
@@ -879,7 +880,7 @@ function createReworkWorkflow(options) {
       timestamp
     );
 
-    const requestId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+    const requestId = getLastInsertRowId(insertReworkRequestResult, "rework request");
     const request = buildReworkRequestPayload(db.prepare(`
       SELECT
         rr.*,

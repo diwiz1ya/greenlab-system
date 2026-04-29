@@ -145,6 +145,21 @@ npm run audit:workflow
 - дубли `BIN/LOC/slot` в активных placement-записях
 - `ready_for_pickup` без placement или без полной сборки BIN
 
+## Database portability audit
+
+Проверка SQL-кода перед PostgreSQL-миграцией:
+
+```bash
+npm run audit:db
+```
+
+Дополнительно:
+
+- JSON-вывод: `npm run audit:db -- --json`
+- завершать с ошибкой при high-блокерах: `npm run audit:db -- --fail-on-high`
+
+Скрипт ищет SQLite-зависимости, которые нельзя автоматически перенести в PostgreSQL: `DatabaseSync`, `PRAGMA`, `BEGIN IMMEDIATE`, `last_insert_rowid()`, SQLite backup-команды и `?` placeholders.
+
 ## Печать QR-корзин BIN-001..BIN-050
 
 ```bash

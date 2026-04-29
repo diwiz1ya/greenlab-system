@@ -2,6 +2,7 @@ const path = require("path");
 const { buildSingleItemCounts, getRemainingItemCounts, itemCountsToJson, normalizeItemCounts, parseBasketItemCounts } = require("./basket-core");
 const { normalizeBasketQrCode } = require("./basket-pool");
 const { normalizePickupLocationQrCode } = require("../pickup/locations");
+const { runImmediateTransaction } = require("../db/transaction");
 const { createReworkWorkflow } = require("./rework-service");
 const { createSortingWorkflow } = require("./sorting-service");
 
@@ -823,44 +824,39 @@ function createWorkflowService(options) {
 
     let loadId = 0;
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      const loadInsert = insertLoad.run(
-        machine.id,
-        station,
-        actor,
-        timestamp,
-        timestamp,
-        timestamp
-      );
-      loadId = Number(loadInsert.lastInsertRowid);
-      const touchedOrderIds = new Set();
-      for (const basket of baskets) {
-        insertLoadBasket.run(loadId, basket.id, basket.order_id, timestamp);
-        insertScanEvent.run(
-          basket.order_id,
-          basket.id,
+      runImmediateTransaction(db, () => {
+        const loadInsert = insertLoad.run(
+          machine.id,
           station,
           actor,
-          `Корзина помещена в ${machine.display_name} (${machine.machine_code}).`,
+          timestamp,
+          timestamp,
           timestamp
         );
-        touchedOrderIds.add(Number(basket.order_id));
-      }
-      for (const orderId of touchedOrderIds) {
-        const firstBasketForOrder = baskets.find((basket) => Number(basket.order_id) === orderId);
-        refreshOrderStatusFromBaskets(
-          orderId,
-          firstBasketForOrder?.cleancloud_order_id || null,
-          timestamp
-        );
-      }
-      db.exec("COMMIT;");
+        loadId = Number(loadInsert.lastInsertRowid);
+        const touchedOrderIds = new Set();
+        for (const basket of baskets) {
+          insertLoadBasket.run(loadId, basket.id, basket.order_id, timestamp);
+          insertScanEvent.run(
+            basket.order_id,
+            basket.id,
+            station,
+            actor,
+            `Корзина помещена в ${machine.display_name} (${machine.machine_code}).`,
+            timestamp
+          );
+          touchedOrderIds.add(Number(basket.order_id));
+        }
+        for (const orderId of touchedOrderIds) {
+          const firstBasketForOrder = baskets.find((basket) => Number(basket.order_id) === orderId);
+          refreshOrderStatusFromBaskets(
+            orderId,
+            firstBasketForOrder?.cleancloud_order_id || null,
+            timestamp
+          );
+        }
+      });
     } catch (error) {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // ignore rollback failure
-      }
       return { error: error?.message || "Failed to start the machine cycle.", status: 500 };
     }
 
@@ -1040,35 +1036,30 @@ function createWorkflowService(options) {
 
     let pendingCount = 0;
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      if (rebindToAnotherBin) {
-        rebindBasketQr.run(basketQr, timestamp, row.basket_id);
-      }
-      unloadBasket.run(timestamp, actor, row.load_basket_id);
-      moveBasket.run(nextStation, nextStation, timestamp, row.basket_id);
+      runImmediateTransaction(db, () => {
+        if (rebindToAnotherBin) {
+          rebindBasketQr.run(basketQr, timestamp, row.basket_id);
+        }
+        unloadBasket.run(timestamp, actor, row.load_basket_id);
+        moveBasket.run(nextStation, nextStation, timestamp, row.basket_id);
 
-      const unloadMessage = rebindToAnotherBin
-        ? `Basket unloaded from ${load.display_name} (${load.machine_code}), QR changed ${originalQr} -> ${basketQr}, station: ${getStationLabel(nextStation)}.`
-        : `Basket unloaded from ${load.display_name} (${load.machine_code}) and moved to station ${getStationLabel(nextStation)}.`;
-      insertScanEvent.run(
-        row.order_id,
-        row.basket_id,
-        load.station,
-        actor,
-        unloadMessage,
-        timestamp
-      );
+        const unloadMessage = rebindToAnotherBin
+          ? `Basket unloaded from ${load.display_name} (${load.machine_code}), QR changed ${originalQr} -> ${basketQr}, station: ${getStationLabel(nextStation)}.`
+          : `Basket unloaded from ${load.display_name} (${load.machine_code}) and moved to station ${getStationLabel(nextStation)}.`;
+        insertScanEvent.run(
+          row.order_id,
+          row.basket_id,
+          load.station,
+          actor,
+          unloadMessage,
+          timestamp
+        );
 
-      refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
-      markCompletedIfEmpty.run(timestamp, load.id, load.id);
-      pendingCount = Number(pendingCountStmt.get(load.id)?.pending_count || 0);
-      db.exec("COMMIT;");
+        refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
+        markCompletedIfEmpty.run(timestamp, load.id, load.id);
+        pendingCount = Number(pendingCountStmt.get(load.id)?.pending_count || 0);
+      });
     } catch (error) {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // ignore rollback failure
-      }
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
         return { error: `QR ${basketQr} is already used by another order.`, status: 409 };
       }
@@ -1141,25 +1132,20 @@ function createWorkflowService(options) {
     `);
 
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      markCancelled.run(actor, timestamp, timestamp, load.id);
-      for (const basket of baskets) {
-        insertScanEvent.run(
-          basket.order_id,
-          basket.id,
-          load.station,
-          actor,
-          `Цикл ${load.display_name} (${load.machine_code}) отменен оператором.`,
-          timestamp
-        );
-      }
-      db.exec("COMMIT;");
+      runImmediateTransaction(db, () => {
+        markCancelled.run(actor, timestamp, timestamp, load.id);
+        for (const basket of baskets) {
+          insertScanEvent.run(
+            basket.order_id,
+            basket.id,
+            load.station,
+            actor,
+            `Цикл ${load.display_name} (${load.machine_code}) отменен оператором.`,
+            timestamp
+          );
+        }
+      });
     } catch (error) {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // ignore rollback failure
-      }
       return { error: error?.message || "Не удалось отменить машинный цикл.", status: 500 };
     }
 
@@ -1720,32 +1706,27 @@ function createWorkflowService(options) {
     `);
 
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      releaseOrderPlacements.run(timestamp, actor, timestamp, orderId);
-      for (const placement of placements) {
-        insertOrderPlacement.run(
-          orderId,
-          placement.slotIndex,
-          placement.binQrCode,
-          placement.locationQrCode,
-          actor,
-          timestamp,
-          timestamp,
-          timestamp
-        );
-      }
-      updateOrderPlacedState.run(timestamp, orderId);
-      const placementSummary = placements
-        .map((placement) => `${placement.binQrCode} -> ${placement.locationQrCode}`)
-        .join("; ");
-      insertScanEvent.run(orderId, actor, `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
-      db.exec("COMMIT;");
+      runImmediateTransaction(db, () => {
+        releaseOrderPlacements.run(timestamp, actor, timestamp, orderId);
+        for (const placement of placements) {
+          insertOrderPlacement.run(
+            orderId,
+            placement.slotIndex,
+            placement.binQrCode,
+            placement.locationQrCode,
+            actor,
+            timestamp,
+            timestamp,
+            timestamp
+          );
+        }
+        updateOrderPlacedState.run(timestamp, orderId);
+        const placementSummary = placements
+          .map((placement) => `${placement.binQrCode} -> ${placement.locationQrCode}`)
+          .join("; ");
+        insertScanEvent.run(orderId, actor, `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
+      });
     } catch (error) {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // ignore rollback failure
-      }
       return { error: error?.message || "Не удалось закрепить заказ за ячейкой выдачи.", status: 500 };
     }
 
@@ -1814,36 +1795,31 @@ function createWorkflowService(options) {
     `);
 
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      updateOrderAfterPickup.run(timestamp, orderId);
-      releasePlacements.run(timestamp, actor, timestamp, orderId);
-      insertScanEvent.run(orderId, actor, "Выдача подтверждена менеджером.", timestamp);
+      runImmediateTransaction(db, () => {
+        updateOrderAfterPickup.run(timestamp, orderId);
+        releasePlacements.run(timestamp, actor, timestamp, orderId);
+        insertScanEvent.run(orderId, actor, "Выдача подтверждена менеджером.", timestamp);
 
-      for (const basket of orderBaskets) {
-        const archivedQrCode = `ARCHIVED:${basket.id}:${timestamp}`;
-        archiveBasket.run(archivedQrCode, timestamp, basket.id);
-      }
+        for (const basket of orderBaskets) {
+          const archivedQrCode = `ARCHIVED:${basket.id}:${timestamp}`;
+          archiveBasket.run(archivedQrCode, timestamp, basket.id);
+        }
 
-      if (orderBaskets.length > 0) {
-        insertScanEvent.run(
-          orderId,
-          actor,
-          `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`,
-          timestamp
-        );
-      }
-      queueSync(orderId, "cleancloud.status", {
-        orderId: order.cleancloud_order_id,
-        status: "Завершён",
-        allowCompleted: true
+        if (orderBaskets.length > 0) {
+          insertScanEvent.run(
+            orderId,
+            actor,
+            `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`,
+            timestamp
+          );
+        }
+        queueSync(orderId, "cleancloud.status", {
+          orderId: order.cleancloud_order_id,
+          status: "Завершён",
+          allowCompleted: true
+        });
       });
-      db.exec("COMMIT;");
     } catch (error) {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // ignore rollback failure
-      }
       return { error: error?.message || "Не удалось подтвердить выдачу.", status: 500 };
     }
 

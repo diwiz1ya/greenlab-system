@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 const { openDatabase } = require("./backend/db");
+const { runImmediateTransaction } = require("./backend/db/transaction");
 const Busboy = require("busboy");
 const { createSessionStore } = require("./backend/auth/session-store");
 const { hasManagerRole, hasStationAccess, canAccessOrderDetails } = require("./backend/auth/access-checks");
@@ -432,9 +433,7 @@ function seedDemoData(options = {}) {
     VALUES (?, ?, ?, ?, ?, ?)
   `);
 
-  try {
-    db.exec("BEGIN IMMEDIATE;");
-
+  runImmediateTransaction(db, () => {
     if (force) {
       db.exec(`
         DELETE FROM webhook_events;
@@ -482,16 +481,7 @@ function seedDemoData(options = {}) {
 
     insertOrder.run("GL-2601", "CC-2601", "Dian Saputra", null, 4.4, "+62 812 2601", null, "Premium", "sorting", "sorting", 0, timestamp, timestamp);
     insertOrder.run("GL-2602", "CC-2602", "Lina Mahendra", null, 3.0, "+62 812 2602", null, "Express", "sorting", "sorting", 0, timestamp, timestamp);
-
-    db.exec("COMMIT;");
-  } catch (error) {
-    try {
-      db.exec("ROLLBACK;");
-    } catch {
-      // ignore rollback failure
-    }
-    throw error;
-  }
+  });
 
   ensurePasswordHashes(db);
   return true;
