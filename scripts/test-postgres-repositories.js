@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { createPostgresCoreRepository } = require("../backend/db/postgres-core-repository");
 const { createPostgresDemoSeedRepository } = require("../backend/db/postgres-demo-seed-repository");
 const { createPostgresIdempotencyRepository } = require("../backend/db/postgres-idempotency-repository");
+const { createPostgresPickupWorkbenchRepository } = require("../backend/db/postgres-pickup-workbench-repository");
 const { createPostgresScanRepository } = require("../backend/db/postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("../backend/db/postgres-security-event-repository");
 const { createPostgresSystemRepository } = require("../backend/db/postgres-system-repository");
@@ -266,6 +267,37 @@ function createFakeQueryable(results = []) {
     "2026-04-29T08:00:00.000Z"
   ]);
   assert.match(seedDb.calls[10].sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13\)/);
+
+  const pickupDb = createFakeQueryable([
+    { rows: [{ total_baskets: 2, baskets_at_pickup: 1 }], rowCount: 1 },
+    { rows: [{ id: 1, basket_code: "B-1", scanned: true }], rowCount: 1 },
+    { rows: [{ slot_index: 1, bin_qr_code: "QR:BIN-001" }], rowCount: 1 },
+    { rows: [{ id: 1, public_id: "GL-2601" }], rowCount: 1 },
+    { rows: [{ id: 2, public_id: "GL-2602" }], rowCount: 1 },
+    { rows: [{ id: 3, public_id: "GL-2603" }], rowCount: 1 }
+  ]);
+  const pickupRepository = createPostgresPickupWorkbenchRepository(pickupDb);
+  assert.deepEqual(await pickupRepository.getOrderAssemblyProgressRow(2601), {
+    total_baskets: 2,
+    baskets_at_pickup: 1
+  });
+  assert.deepEqual(await pickupRepository.listPickupScanProgressRows(2601), [
+    { id: 1, basket_code: "B-1", scanned: true }
+  ]);
+  assert.deepEqual(await pickupRepository.listPickupPlacementRows(2601), [
+    { slot_index: 1, bin_qr_code: "QR:BIN-001" }
+  ]);
+  assert.deepEqual(await pickupRepository.listAssemblyOrders(), [{ id: 1, public_id: "GL-2601" }]);
+  assert.deepEqual(await pickupRepository.listReadyToPlaceOrders(), [{ id: 2, public_id: "GL-2602" }]);
+  assert.deepEqual(await pickupRepository.listPlacedOrders(), [{ id: 3, public_id: "GL-2603" }]);
+  assert.deepEqual(pickupDb.calls[0].params, [2601, "rework_transferred", "archived"]);
+  assert.deepEqual(pickupDb.calls[1].params, [2601, "rework_transferred", "archived"]);
+  assert.deepEqual(pickupDb.calls[2].params, [2601]);
+  assert.match(pickupDb.calls[0].sql, /COUNT\(\*\)::int AS total_baskets/);
+  assert.match(pickupDb.calls[1].sql, /EXISTS \( SELECT 1 FROM scan_events se/);
+  assert.match(pickupDb.calls[3].sql, /COALESCE\(ready_to_place, 0\) = 0/);
+  assert.match(pickupDb.calls[4].sql, /COALESCE\(ready_to_place, 0\) = 1/);
+  assert.match(pickupDb.calls[5].sql, /ready_for_pickup, 0\) = 1/);
 
   console.log("PostgreSQL repository tests: OK");
 })().catch((error) => {
