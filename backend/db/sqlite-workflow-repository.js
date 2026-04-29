@@ -167,6 +167,19 @@ function createSqliteWorkflowRepository(db) {
       AND mlb.unloaded_at IS NULL
     LIMIT 1
   `);
+  const insertMachineLoadStmt = db.prepare(`
+    INSERT INTO machine_loads (
+      machine_id, station, status, started_by, started_at, created_at, updated_at
+    ) VALUES (?, ?, 'active', ?, ?, ?, ?)
+  `);
+  const insertMachineLoadBasketStmt = db.prepare(`
+    INSERT INTO machine_load_baskets (load_id, basket_id, order_id, added_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  const insertScanEventStmt = db.prepare(`
+    INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+    VALUES (?, ?, ?, ?, 'ok', ?, ?)
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -184,7 +197,10 @@ function createSqliteWorkflowRepository(db) {
     listMachineWorkbenchRows: (station) => listMachineWorkbenchRowsStmt.all(station),
     listLoadBaskets: (loadId) => listLoadBasketsStmt.all(loadId),
     findMachineFlowBasketByQr: (qrCode) => findMachineFlowBasketByQrStmt.get(qrCode),
-    findActiveMachineLoadByBasketId: (basketId) => findActiveMachineLoadByBasketIdStmt.get(basketId)
+    findActiveMachineLoadByBasketId: (basketId) => findActiveMachineLoadByBasketIdStmt.get(basketId),
+    insertMachineLoad: ({ machineId, station, actor, timestamp }) => insertMachineLoadStmt.run(machineId, station, actor, timestamp, timestamp, timestamp),
+    insertMachineLoadBasket: ({ loadId, basketId, orderId, timestamp }) => insertMachineLoadBasketStmt.run(loadId, basketId, orderId, timestamp),
+    insertScanEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, message, timestamp)
   };
 }
 

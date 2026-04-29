@@ -626,43 +626,33 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    const insertLoad = db.prepare(`
-      INSERT INTO machine_loads (
-        machine_id, station, status, started_by, started_at, created_at, updated_at
-      ) VALUES (?, ?, 'active', ?, ?, ?, ?)
-    `);
-    const insertLoadBasket = db.prepare(`
-      INSERT INTO machine_load_baskets (load_id, basket_id, order_id, added_at)
-      VALUES (?, ?, ?, ?)
-    `);
-    const insertScanEvent = db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `);
 
     let loadId = 0;
     try {
       runImmediateTransaction(db, () => {
-        const loadInsert = insertLoad.run(
-          machine.id,
+        const loadInsert = workflowRepository.insertMachineLoad({
+          machineId: machine.id,
           station,
           actor,
-          timestamp,
-          timestamp,
           timestamp
-        );
+        });
         loadId = Number(loadInsert.lastInsertRowid);
         const touchedOrderIds = new Set();
         for (const basket of baskets) {
-          insertLoadBasket.run(loadId, basket.id, basket.order_id, timestamp);
-          insertScanEvent.run(
-            basket.order_id,
-            basket.id,
+          workflowRepository.insertMachineLoadBasket({
+            loadId,
+            basketId: basket.id,
+            orderId: basket.order_id,
+            timestamp
+          });
+          workflowRepository.insertScanEvent({
+            orderId: basket.order_id,
+            basketId: basket.id,
             station,
             actor,
-            `Корзина помещена в ${machine.display_name} (${machine.machine_code}).`,
+            message: `Корзина помещена в ${machine.display_name} (${machine.machine_code}).`,
             timestamp
-          );
+          });
           touchedOrderIds.add(Number(basket.order_id));
         }
         for (const orderId of touchedOrderIds) {
