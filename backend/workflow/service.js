@@ -690,18 +690,7 @@ function createWorkflowService(options) {
   }
 
   function unloadBasketFromMachineLoad(loadId, basketQrRaw, actor, options = {}) {
-    const load = db.prepare(`
-      SELECT
-        ml.id,
-        ml.station,
-        ml.status,
-        m.machine_code,
-        m.display_name
-      FROM machine_loads ml
-      JOIN laundry_machines m ON m.id = ml.machine_id
-      WHERE ml.id = ?
-      LIMIT 1
-    `).get(loadId);
+    const load = workflowRepository.getMachineLoadById(loadId);
 
     if (!load) {
       return { error: "Machine cycle not found.", status: 404 };
@@ -727,25 +716,7 @@ function createWorkflowService(options) {
     }
     const nextStation = productionFlow[currentIndex + 1];
 
-    const pendingRows = db.prepare(`
-      SELECT
-        mlb.id AS load_basket_id,
-        mlb.unloaded_at,
-        b.id AS basket_id,
-        b.order_id,
-        b.basket_code,
-        b.qr_code,
-        b.station,
-        b.status,
-        o.cleancloud_order_id,
-        o.public_id
-      FROM machine_load_baskets mlb
-      JOIN baskets b ON b.id = mlb.basket_id
-      JOIN orders o ON o.id = b.order_id
-      WHERE mlb.load_id = ?
-        AND mlb.unloaded_at IS NULL
-      ORDER BY mlb.id ASC
-    `).all(loadId);
+    const pendingRows = workflowRepository.listPendingMachineLoadBaskets(loadId);
 
     if (!pendingRows.length) {
       return { error: "No baskets left to unload in this machine cycle.", status: 409 };
@@ -775,13 +746,7 @@ function createWorkflowService(options) {
     const originalQr = String(row.qr_code || "");
     const rebindToAnotherBin = basketQr !== originalQr;
     if (rebindToAnotherBin) {
-      const knownBin = db.prepare(`
-        SELECT qr_code
-        FROM basket_catalog
-        WHERE qr_code = ?
-          AND is_active = 1
-        LIMIT 1
-      `).get(basketQr);
+      const knownBin = workflowRepository.findActiveBasketCatalogQr(basketQr);
       if (!knownBin) {
         return {
           error: `QR ${basketQr} is not present in BIN catalog BIN-001..BIN-050.`,
@@ -789,13 +754,7 @@ function createWorkflowService(options) {
         };
       }
 
-      const occupied = db.prepare(`
-        SELECT basket_code
-        FROM baskets
-        WHERE qr_code = ?
-          AND id != ?
-        LIMIT 1
-      `).get(basketQr, row.basket_id);
+      const occupied = workflowRepository.findBasketQrOccupant({ qrCode: basketQr, excludeBasketId: row.basket_id });
       if (occupied?.basket_code) {
         return {
           error: `QR ${basketQr} is already occupied by basket ${occupied.basket_code}.`,
@@ -805,67 +764,31 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    const unloadBasket = db.prepare(`
-      UPDATE machine_load_baskets
-      SET unloaded_at = ?, unloaded_by = ?
-      WHERE id = ?
-    `);
-    const rebindBasketQr = db.prepare(`
-      UPDATE baskets
-      SET qr_code = ?, updated_at = ?
-      WHERE id = ?
-    `);
-    const moveBasket = db.prepare(`
-      UPDATE baskets
-      SET station = ?, status = ?, updated_at = ?
-      WHERE id = ?
-    `);
-    const markCompletedIfEmpty = db.prepare(`
-      UPDATE machine_loads
-      SET status = 'completed', updated_at = ?
-      WHERE id = ?
-        AND status = 'active'
-        AND NOT EXISTS (
-          SELECT 1 FROM machine_load_baskets
-          WHERE load_id = ?
-            AND unloaded_at IS NULL
-        )
-    `);
-    const pendingCountStmt = db.prepare(`
-      SELECT COUNT(*) AS pending_count
-      FROM machine_load_baskets
-      WHERE load_id = ?
-        AND unloaded_at IS NULL
-    `);
-    const insertScanEvent = db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `);
 
     let pendingCount = 0;
     try {
       runImmediateTransaction(db, () => {
         if (rebindToAnotherBin) {
-          rebindBasketQr.run(basketQr, timestamp, row.basket_id);
+          workflowRepository.rebindBasketQr({ basketId: row.basket_id, qrCode: basketQr, timestamp });
         }
-        unloadBasket.run(timestamp, actor, row.load_basket_id);
-        moveBasket.run(nextStation, nextStation, timestamp, row.basket_id);
+        workflowRepository.unloadMachineLoadBasket({ loadBasketId: row.load_basket_id, actor, timestamp });
+        workflowRepository.moveBasketToStation({ basketId: row.basket_id, station: nextStation, timestamp });
 
         const unloadMessage = rebindToAnotherBin
           ? `Basket unloaded from ${load.display_name} (${load.machine_code}), QR changed ${originalQr} -> ${basketQr}, station: ${getStationLabel(nextStation)}.`
           : `Basket unloaded from ${load.display_name} (${load.machine_code}) and moved to station ${getStationLabel(nextStation)}.`;
-        insertScanEvent.run(
-          row.order_id,
-          row.basket_id,
-          load.station,
+        workflowRepository.insertScanEvent({
+          orderId: row.order_id,
+          basketId: row.basket_id,
+          station: load.station,
           actor,
-          unloadMessage,
+          message: unloadMessage,
           timestamp
-        );
+        });
 
         refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
-        markCompletedIfEmpty.run(timestamp, load.id, load.id);
-        pendingCount = Number(pendingCountStmt.get(load.id)?.pending_count || 0);
+        workflowRepository.markMachineLoadCompletedIfEmpty({ loadId: load.id, timestamp });
+        pendingCount = workflowRepository.countPendingMachineLoadBaskets(load.id);
       });
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {

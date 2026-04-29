@@ -180,6 +180,83 @@ function createSqliteWorkflowRepository(db) {
     INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
     VALUES (?, ?, ?, ?, 'ok', ?, ?)
   `);
+  const getMachineLoadByIdStmt = db.prepare(`
+    SELECT
+      ml.id,
+      ml.station,
+      ml.status,
+      m.machine_code,
+      m.display_name
+    FROM machine_loads ml
+    JOIN laundry_machines m ON m.id = ml.machine_id
+    WHERE ml.id = ?
+    LIMIT 1
+  `);
+  const listPendingMachineLoadBasketsStmt = db.prepare(`
+    SELECT
+      mlb.id AS load_basket_id,
+      mlb.unloaded_at,
+      b.id AS basket_id,
+      b.order_id,
+      b.basket_code,
+      b.qr_code,
+      b.station,
+      b.status,
+      o.cleancloud_order_id,
+      o.public_id
+    FROM machine_load_baskets mlb
+    JOIN baskets b ON b.id = mlb.basket_id
+    JOIN orders o ON o.id = b.order_id
+    WHERE mlb.load_id = ?
+      AND mlb.unloaded_at IS NULL
+    ORDER BY mlb.id ASC
+  `);
+  const findActiveBasketCatalogQrStmt = db.prepare(`
+    SELECT qr_code
+    FROM basket_catalog
+    WHERE qr_code = ?
+      AND is_active = 1
+    LIMIT 1
+  `);
+  const findBasketQrOccupantStmt = db.prepare(`
+    SELECT basket_code
+    FROM baskets
+    WHERE qr_code = ?
+      AND id != ?
+    LIMIT 1
+  `);
+  const unloadMachineLoadBasketStmt = db.prepare(`
+    UPDATE machine_load_baskets
+    SET unloaded_at = ?, unloaded_by = ?
+    WHERE id = ?
+  `);
+  const rebindBasketQrStmt = db.prepare(`
+    UPDATE baskets
+    SET qr_code = ?, updated_at = ?
+    WHERE id = ?
+  `);
+  const moveBasketToStationStmt = db.prepare(`
+    UPDATE baskets
+    SET station = ?, status = ?, updated_at = ?
+    WHERE id = ?
+  `);
+  const markMachineLoadCompletedIfEmptyStmt = db.prepare(`
+    UPDATE machine_loads
+    SET status = 'completed', updated_at = ?
+    WHERE id = ?
+      AND status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM machine_load_baskets
+        WHERE load_id = ?
+          AND unloaded_at IS NULL
+      )
+  `);
+  const countPendingMachineLoadBasketsStmt = db.prepare(`
+    SELECT COUNT(*) AS pending_count
+    FROM machine_load_baskets
+    WHERE load_id = ?
+      AND unloaded_at IS NULL
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -200,7 +277,16 @@ function createSqliteWorkflowRepository(db) {
     findActiveMachineLoadByBasketId: (basketId) => findActiveMachineLoadByBasketIdStmt.get(basketId),
     insertMachineLoad: ({ machineId, station, actor, timestamp }) => insertMachineLoadStmt.run(machineId, station, actor, timestamp, timestamp, timestamp),
     insertMachineLoadBasket: ({ loadId, basketId, orderId, timestamp }) => insertMachineLoadBasketStmt.run(loadId, basketId, orderId, timestamp),
-    insertScanEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, message, timestamp)
+    insertScanEvent: ({ orderId, basketId, station, actor, message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, message, timestamp),
+    getMachineLoadById: (loadId) => getMachineLoadByIdStmt.get(loadId),
+    listPendingMachineLoadBaskets: (loadId) => listPendingMachineLoadBasketsStmt.all(loadId),
+    findActiveBasketCatalogQr: (qrCode) => findActiveBasketCatalogQrStmt.get(qrCode),
+    findBasketQrOccupant: ({ qrCode, excludeBasketId }) => findBasketQrOccupantStmt.get(qrCode, excludeBasketId),
+    unloadMachineLoadBasket: ({ loadBasketId, actor, timestamp }) => unloadMachineLoadBasketStmt.run(timestamp, actor, loadBasketId),
+    rebindBasketQr: ({ basketId, qrCode, timestamp }) => rebindBasketQrStmt.run(qrCode, timestamp, basketId),
+    moveBasketToStation: ({ basketId, station, timestamp }) => moveBasketToStationStmt.run(station, station, timestamp, basketId),
+    markMachineLoadCompletedIfEmpty: ({ loadId, timestamp }) => markMachineLoadCompletedIfEmptyStmt.run(timestamp, loadId, loadId),
+    countPendingMachineLoadBaskets: (loadId) => Number(countPendingMachineLoadBasketsStmt.get(loadId)?.pending_count || 0)
   };
 }
 
