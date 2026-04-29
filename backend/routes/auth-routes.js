@@ -16,8 +16,9 @@ function handleAuthRoutes(req, res, url, ctx) {
   } = ctx;
 
   if (req.method === "POST" && url.pathname === "/api/login") {
-    readJson(req)
-      .then((body) => {
+    return (async () => {
+      try {
+        const body = await readJson(req);
         const clientIp = getClientIp(req, { trustProxy });
         const username = parseRequiredString(body.username, { minLength: 2, maxLength: 64 });
         const password = parseRequiredString(body.password, { minLength: 1, maxLength: 256 });
@@ -32,7 +33,7 @@ function handleAuthRoutes(req, res, url, ctx) {
             message: "Valid username/password are required"
           });
           json(res, 400, { error: "Valid username/password are required" });
-          return;
+          return true;
         }
 
         const limiterResult = loginRateLimiter.hit(`${clientIp}:${username}`);
@@ -48,7 +49,7 @@ function handleAuthRoutes(req, res, url, ctx) {
             message: `Too many login attempts. Retry after ${limiterResult.retryAfterSec}s`
           });
           json(res, 429, { error: "Too many login attempts. Please try again later." });
-          return;
+          return true;
         }
 
         const user = userRepository.findLoginUserByUsername(username);
@@ -64,7 +65,7 @@ function handleAuthRoutes(req, res, url, ctx) {
             message: "Invalid username or password"
           });
           json(res, 401, { error: "Invalid username or password" });
-          return;
+          return true;
         }
 
         const session = sessionStore.createFromUser(user);
@@ -88,8 +89,8 @@ function handleAuthRoutes(req, res, url, ctx) {
             homeStation: session.homeStation
           }
         });
-      })
-      .catch((error) => {
+        return true;
+      } catch (error) {
         const clientIp = getClientIp(req, { trustProxy });
         logSecurityEvent({
           category: "auth.login.invalid_json",
@@ -101,8 +102,9 @@ function handleAuthRoutes(req, res, url, ctx) {
           message: error.message
         });
         json(res, 400, { error: error.message });
-      });
-    return true;
+        return true;
+      }
+    })();
   }
 
   if (req.method === "GET" && url.pathname === "/api/session") {

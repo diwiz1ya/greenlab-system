@@ -18,6 +18,7 @@
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 - Async transaction scaffold для будущего PostgreSQL adapter добавлен в `backend/db/transaction.js`; быстрый тест доступен через `npm run test:db-transactions`.
 - API route dispatcher теперь умеет ждать async route handlers, что нужно для будущих async PostgreSQL repository-вызовов.
+- `/api/login` переведен на async route handler pattern как первый runtime-маршрут, готовый к async repository-вызову.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
 - Idempotency records уже вызываются через repository factory `backend/db/repositories.js`.
 - System health/sync summary reads уже вызываются через repository factory `backend/db/repositories.js`.
