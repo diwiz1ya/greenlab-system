@@ -30,15 +30,8 @@ function verifyHashedPassword(password, storedHash) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
-function ensurePasswordHashes(db) {
-  const rows = db.prepare("SELECT id, password, password_hash FROM users").all();
-  const updateHashAndRedact = db.prepare(`
-    UPDATE users
-    SET password = ?, password_hash = ?
-    WHERE id = ?
-  `);
-  const redactOnly = db.prepare("UPDATE users SET password = ? WHERE id = ?");
-
+function ensurePasswordHashes(userRepository) {
+  const rows = userRepository.listPasswordRows();
   for (const row of rows) {
     const storedHash = String(row.password_hash || "").trim();
     const hasValidHash = storedHash.startsWith("scrypt$");
@@ -48,12 +41,12 @@ function ensurePasswordHashes(db) {
       if (!plain || plain === REDACTED_PASSWORD_VALUE) {
         continue;
       }
-      updateHashAndRedact.run(REDACTED_PASSWORD_VALUE, hashPassword(plain), row.id);
+      userRepository.updatePasswordHashAndRedact(row.id, REDACTED_PASSWORD_VALUE, hashPassword(plain));
       continue;
     }
 
     if (plain !== REDACTED_PASSWORD_VALUE) {
-      redactOnly.run(REDACTED_PASSWORD_VALUE, row.id);
+      userRepository.redactPassword(row.id, REDACTED_PASSWORD_VALUE);
     }
   }
 }

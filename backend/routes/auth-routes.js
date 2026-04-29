@@ -3,7 +3,7 @@ const { getClientIp } = require("../http/request-meta");
 
 function handleAuthRoutes(req, res, url, ctx) {
   const {
-    db,
+    userRepository,
     readJson,
     json,
     requireAuth,
@@ -51,11 +51,7 @@ function handleAuthRoutes(req, res, url, ctx) {
           return;
         }
 
-        const user = db.prepare(`
-          SELECT id, username, password_hash, display_name, role, allowed_stations
-          FROM users
-          WHERE username = ?
-        `).get(username);
+        const user = userRepository.findLoginUserByUsername(username);
 
         if (!user || !verifyHashedPassword(password, user.password_hash)) {
           logSecurityEvent({

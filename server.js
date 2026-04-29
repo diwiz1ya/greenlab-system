@@ -4,6 +4,7 @@ const path = require("path");
 const { URL } = require("url");
 const { openDatabase } = require("./backend/db");
 const { runImmediateTransaction } = require("./backend/db/transaction");
+const { createRepositories } = require("./backend/db/repositories");
 const Busboy = require("busboy");
 const { createSessionStore } = require("./backend/auth/session-store");
 const { hasManagerRole, hasStationAccess, canAccessOrderDetails } = require("./backend/auth/access-checks");
@@ -133,6 +134,10 @@ const { db, client: DB_CLIENT } = openDatabase({
   sqlitePath: DB_PATH,
   databaseUrl: process.env.GREENLAB_DATABASE_URL
 });
+const {
+  securityEventRepository,
+  userRepository
+} = createRepositories({ client: DB_CLIENT, db });
 
 const sessionStore = createSessionStore();
 const { getScanExportRows, getRecentScansByStation, scanRowsToCsv } = createScanExportService(db);
@@ -235,7 +240,7 @@ const loginRateLimiter = createSlidingWindowRateLimiter({
 const {
   logSecurityEvent,
   listSecurityEvents
-} = createSecurityEventService(db, { nowIso });
+} = createSecurityEventService(securityEventRepository, { nowIso });
 
 seedDemoData({ force: DEMO_RESET_ON_BOOT });
 
@@ -412,7 +417,7 @@ function seedDemoData(options = {}) {
       ensureDefaultMachines();
       ensureDefaultBasketCatalog();
       ensureDefaultPickupLocations();
-      ensurePasswordHashes(db);
+      ensurePasswordHashes(userRepository);
       return false;
     }
   }
@@ -483,7 +488,7 @@ function seedDemoData(options = {}) {
     insertOrder.run("GL-2602", "CC-2602", "Lina Mahendra", null, 3.0, "+62 812 2602", null, "Express", "sorting", "sorting", 0, timestamp, timestamp);
   });
 
-  ensurePasswordHashes(db);
+  ensurePasswordHashes(userRepository);
   return true;
 }
 
@@ -885,7 +890,7 @@ function getSyncQueueSummary() {
 }
 
 const authRoutesContext = {
-  db,
+  userRepository,
   readJson,
   json,
   requireAuth,

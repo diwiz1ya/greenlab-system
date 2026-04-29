@@ -11,6 +11,7 @@
 - SQL portability audit доступен через `npm run audit:db`.
 - Прямые `last_insert_rowid()` убраны из workflow-кода.
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
+- Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
 
 ## Почему нужен поэтапный переход
 
@@ -44,6 +45,11 @@ db.exec(sql)
 - low: `7`
 
 SQLite-only runtime, backup and transaction code сейчас собран в `backend/db`. Дальше нужно не бороться с high-блокерами, а постепенно переводить `db.prepare(...).get/all/run` на будущий async repository/query слой.
+
+Первым шагом этот repository слой уже начат для:
+
+- login/user password hash migration
+- security event insert/list
 
 ## Что не делать
 
