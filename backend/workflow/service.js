@@ -1138,11 +1138,7 @@ function createWorkflowService(options) {
   }
 
   function releaseOrderFromHold(orderId, actor) {
-    const order = db.prepare(`
-      SELECT id, status, cleancloud_order_id
-      FROM orders
-      WHERE id = ?
-    `).get(orderId);
+    const order = workflowRepository.findHoldOrderById(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
@@ -1150,30 +1146,15 @@ function createWorkflowService(options) {
       return { error: "Заказ не находится в HOLD", status: 400 };
     }
 
-    const basketCount = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?").get(orderId).count;
+    const basketCount = workflowRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "У заказа нет корзин для возврата в работу", status: 400 };
     }
 
     const timestamp = nowIso();
-    db.prepare(`
-      UPDATE baskets
-      SET station = 'washing', status = 'washing', updated_at = ?
-      WHERE order_id = ?
-        AND station = ?
-        AND status = ?
-    `).run(timestamp, orderId, holdStation, holdStation);
-
-    db.prepare(`
-      UPDATE orders
-      SET status = 'washing', cleancloud_status = 'В работе', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(timestamp, orderId);
-
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'overview', ?, 'ok', 'HOLD снят менеджером. Заказ возвращён на стирку.', ?)
-    `).run(orderId, actor, timestamp);
+    workflowRepository.moveHoldBasketsToWashing({ orderId, holdStation, timestamp });
+    workflowRepository.releaseHoldOrderToWashing({ orderId, timestamp });
+    insertScanEvent(orderId, null, "overview", actor, "ok", "HOLD снят менеджером. Заказ возвращён на стирку.", timestamp);
 
     queueSync(orderId, "cleancloud.status", {
       orderId: order.cleancloud_order_id,

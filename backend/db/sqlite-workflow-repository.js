@@ -292,6 +292,24 @@ function createSqliteWorkflowRepository(db) {
       AND result = 'ok'
     LIMIT 1
   `);
+  const findHoldOrderByIdStmt = db.prepare(`
+    SELECT id, status, cleancloud_order_id
+    FROM orders
+    WHERE id = ?
+  `);
+  const countBasketsByOrderStmt = db.prepare("SELECT COUNT(*) AS count FROM baskets WHERE order_id = ?");
+  const moveHoldBasketsToWashingStmt = db.prepare(`
+    UPDATE baskets
+    SET station = 'washing', status = 'washing', updated_at = ?
+    WHERE order_id = ?
+      AND station = ?
+      AND status = ?
+  `);
+  const releaseHoldOrderToWashingStmt = db.prepare(`
+    UPDATE orders
+    SET status = 'washing', cleancloud_status = 'В работе', ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
+    WHERE id = ?
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -327,7 +345,11 @@ function createSqliteWorkflowRepository(db) {
     findOrderPublicId: (orderId) => findOrderPublicIdStmt.get(orderId),
     getPickupScanOrderState: (orderId) => getPickupScanOrderStateStmt.get(orderId),
     hasPickupHandoverConfirmation: (orderId) => Boolean(hasPickupHandoverConfirmationStmt.get(orderId)),
-    hasBasketPickupOkScan: ({ orderId, basketId }) => Boolean(hasBasketPickupOkScanStmt.get(orderId, basketId))
+    hasBasketPickupOkScan: ({ orderId, basketId }) => Boolean(hasBasketPickupOkScanStmt.get(orderId, basketId)),
+    findHoldOrderById: (orderId) => findHoldOrderByIdStmt.get(orderId),
+    countBasketsByOrder: (orderId) => Number(countBasketsByOrderStmt.get(orderId)?.count || 0),
+    moveHoldBasketsToWashing: ({ orderId, holdStation, timestamp }) => moveHoldBasketsToWashingStmt.run(timestamp, orderId, holdStation, holdStation),
+    releaseHoldOrderToWashing: ({ orderId, timestamp }) => releaseHoldOrderToWashingStmt.run(timestamp, orderId)
   };
 }
 
