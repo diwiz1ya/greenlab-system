@@ -138,6 +138,7 @@ const {
   coreRepository,
   demoSeedRepository,
   idempotencyRepository,
+  orderQueryRepository,
   pickupWorkbenchRepository,
   scanRepository,
   securityEventRepository,
@@ -176,7 +177,7 @@ const qcIssueLabels = {
   extra_treatment: "Extra treatment required",
   damage: "Damage"
 };
-const { getOrderDetails, getOverview, listStationOrders, getQcLiveMetrics } = createOrderQueryService(db, {
+const { getOrderDetails, getOverview, listStationOrders, getQcLiveMetrics } = createOrderQueryService(orderQueryRepository, {
   stationLabels,
   holdStation: HOLD_STATION
 });

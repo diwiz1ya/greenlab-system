@@ -1,4 +1,4 @@
-function createOrderQueryService(db, options = {}) {
+function createOrderQueryService(orderQueryRepository, options = {}) {
   const stationLabels = options.stationLabels || {};
   const holdStation = options.holdStation || "hold";
 
@@ -33,38 +33,13 @@ function createOrderQueryService(db, options = {}) {
   }
 
   function getOrderDetails(orderId) {
-    const order = db.prepare(`
-      SELECT id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight, customer_phone, customer_email, service_tier, status,
-             cleancloud_status, ready_to_place, ready_for_pickup, created_at, updated_at
-      FROM orders
-      WHERE id = ?
-    `).get(orderId);
+    const order = orderQueryRepository.findOrderById(orderId);
 
     if (!order) {
       return null;
     }
 
-    const baskets = db.prepare(`
-      SELECT
-        id,
-        basket_code,
-        basket_type,
-        basket_items_json,
-        basket_kind,
-        parent_basket_id,
-        rework_reason,
-        rework_attempt,
-        label_printed_at,
-        label_print_count,
-        station,
-        status,
-        qr_code,
-        created_at,
-        updated_at
-      FROM baskets
-      WHERE order_id = ?
-      ORDER BY id
-    `).all(orderId).map((basket) => {
+    const baskets = orderQueryRepository.listBasketsByOrderId(orderId).map((basket) => {
       const { basket_items_json, ...rest } = basket;
       return {
         ...rest,
@@ -74,13 +49,7 @@ function createOrderQueryService(db, options = {}) {
     const basketIds = baskets.map((basket) => basket.id);
     const imagesByBasketId = new Map();
     if (basketIds.length) {
-      const placeholders = basketIds.map(() => "?").join(", ");
-      const imageRows = db.prepare(`
-        SELECT id, basket_id, image_role, sort_order, note, public_url, created_at
-        FROM basket_images
-        WHERE basket_id IN (${placeholders})
-        ORDER BY basket_id, sort_order, id
-      `).all(...basketIds);
+      const imageRows = orderQueryRepository.listBasketImagesByBasketIds(basketIds);
 
       for (const row of imageRows) {
         if (!imagesByBasketId.has(row.basket_id)) {
@@ -100,50 +69,14 @@ function createOrderQueryService(db, options = {}) {
       basket.images = imagesByBasketId.get(basket.id) || [];
     }
 
-    const scans = db.prepare(`
-      SELECT id, station, actor, result, message, created_at, basket_id
-      FROM scan_events
-      WHERE order_id = ?
-      ORDER BY datetime(created_at) DESC
-      LIMIT 10
-    `).all(orderId);
-    const pickupPlacements = db.prepare(`
-      SELECT
-        slot_index,
-        bin_qr_code,
-        location_qr_code,
-        placed_at
-      FROM pickup_order_placements
-      WHERE order_id = ?
-        AND released_at IS NULL
-      ORDER BY slot_index, id
-    `).all(orderId).map((row) => ({
+    const scans = orderQueryRepository.listRecentScansByOrderId(orderId);
+    const pickupPlacements = orderQueryRepository.listPickupPlacementsByOrderId(orderId).map((row) => ({
       slot_index: Number(row.slot_index || 1),
       bin_qr_code: row.bin_qr_code || "",
       location_qr_code: row.location_qr_code || "",
       placed_at: row.placed_at || null
     }));
-    const machineUsageRows = db.prepare(`
-      SELECT
-        ml.station,
-        m.machine_code,
-        m.display_name,
-        MAX(COALESCE(ml.completed_at, ml.updated_at, ml.started_at)) AS last_used_at
-      FROM machine_load_baskets mlb
-      JOIN machine_loads ml ON ml.id = mlb.load_id
-      JOIN laundry_machines m ON m.id = ml.machine_id
-      WHERE mlb.order_id = ?
-        AND ml.status IN ('active', 'completed')
-      GROUP BY ml.station, m.machine_code, m.display_name
-      ORDER BY
-        CASE ml.station
-          WHEN 'washing' THEN 0
-          WHEN 'drying' THEN 1
-          ELSE 2
-        END,
-        datetime(last_used_at) DESC,
-        m.machine_code ASC
-    `).all(orderId);
+    const machineUsageRows = orderQueryRepository.listMachineUsageByOrderId(orderId);
     const machineUsage = { washing: [], drying: [], other: [] };
     for (const row of machineUsageRows) {
       const entry = {
@@ -160,18 +93,7 @@ function createOrderQueryService(db, options = {}) {
       }
     }
 
-    const reworkRequests = db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      WHERE rr.order_id = ?
-      ORDER BY rr.id DESC
-    `).all(orderId).map((row) => ({
+    const reworkRequests = orderQueryRepository.listReworkRequestsByOrderId(orderId).map((row) => ({
       id: row.id,
       order_id: row.order_id,
       source_basket_id: row.source_basket_id,
@@ -227,102 +149,16 @@ function createOrderQueryService(db, options = {}) {
       }
 
       if (station === "sorting") {
-        counts.sorting = db.prepare(`
-          SELECT COUNT(*) AS count
-          FROM orders
-          WHERE status IN ('sorting', 'sorted')
-        `).get().count;
+        counts.sorting = orderQueryRepository.countSortingOrders();
         continue;
       }
 
-      counts[station] = db.prepare(`
-        SELECT COUNT(DISTINCT o.id) AS count
-        FROM orders o
-        JOIN baskets b ON b.order_id = o.id
-        WHERE b.station = ? AND b.status = ?
-      `).get(station, station).count;
+      counts[station] = orderQueryRepository.countOrdersByBasketStation(station);
     }
-    counts.hold = db.prepare(`
-      SELECT COUNT(DISTINCT o.id) AS count
-      FROM orders o
-      JOIN baskets b ON b.order_id = o.id
-      WHERE b.station = ? AND b.status = ?
-    `).get(holdStation, holdStation).count;
-    counts.ready = db.prepare("SELECT COUNT(*) AS count FROM orders WHERE ready_for_pickup = 1").get().count;
+    counts.hold = orderQueryRepository.countOrdersByBasketStation(holdStation);
+    counts.ready = orderQueryRepository.countReadyOrders();
 
-    const orders = db.prepare(`
-      SELECT
-        o.id,
-        o.public_id,
-        o.cleancloud_order_id,
-        o.customer_name,
-        o.customer_id,
-        o.order_weight,
-        o.customer_phone,
-        o.customer_email,
-        o.service_tier,
-        o.status,
-        o.cleancloud_status,
-        o.ready_to_place,
-        o.ready_for_pickup,
-        o.created_at,
-        o.updated_at,
-        (
-          SELECT COUNT(*)
-          FROM baskets b
-          WHERE b.order_id = o.id
-        ) AS basket_count,
-        (
-          SELECT COUNT(*)
-          FROM baskets b
-          WHERE b.order_id = o.id AND COALESCE(b.basket_kind, 'main') = 'rework'
-        ) AS rework_basket_count,
-        (
-          SELECT COUNT(*)
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id AND rr.request_status = 'pending_customer_approval'
-        ) AS pending_customer_approval_count,
-        (
-          SELECT MIN(rr.requested_at)
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id AND rr.request_status = 'pending_customer_approval'
-        ) AS pending_approval_since,
-        (
-          SELECT MIN(COALESCE(rr.decision_at, rr.updated_at))
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id
-            AND rr.request_status IN ('approved_waiting_transfer', 'declined_waiting_return')
-            AND rr.handoff_confirmed_at IS NULL
-        ) AS pending_qc_task_since,
-        (
-          SELECT rr.request_status
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id
-            AND rr.request_status IN ('approved_waiting_transfer', 'declined_waiting_return')
-            AND rr.handoff_confirmed_at IS NULL
-          ORDER BY datetime(COALESCE(rr.decision_at, rr.updated_at)) ASC, rr.id ASC
-          LIMIT 1
-        ) AS pending_qc_task_kind,
-        (
-          SELECT COUNT(*)
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id
-        ) AS rework_request_count,
-        (
-          SELECT COUNT(*)
-          FROM rework_requests rr
-          WHERE rr.order_id = o.id
-            AND rr.request_status IN ('declined', 'declined_waiting_return')
-        ) AS rework_declined_count,
-        (
-          SELECT COALESCE(MAX(b.rework_attempt), 0)
-          FROM baskets b
-          WHERE b.order_id = o.id
-            AND COALESCE(b.basket_kind, 'main') = 'rework'
-        ) AS max_rework_attempt
-      FROM orders o
-      ORDER BY o.id
-    `).all().map((row) => ({
+    const orders = orderQueryRepository.listOverviewOrders().map((row) => ({
       ...row,
       ready_to_place: Boolean(row.ready_to_place),
       ready_for_pickup: Boolean(row.ready_for_pickup),
@@ -336,16 +172,7 @@ function createOrderQueryService(db, options = {}) {
       rework_declined_count: Number(row.rework_declined_count || 0),
       max_rework_attempt: Number(row.max_rework_attempt || 0)
     }));
-    const pickupPlacements = db.prepare(`
-      SELECT
-        p.order_id,
-        p.slot_index,
-        p.bin_qr_code,
-        p.location_qr_code
-      FROM pickup_order_placements p
-      WHERE p.released_at IS NULL
-      ORDER BY p.order_id, p.slot_index, p.id
-    `).all();
+    const pickupPlacements = orderQueryRepository.listActivePickupPlacements();
     const placementsByOrderId = new Map();
     for (const row of pickupPlacements) {
       const orderId = Number(row.order_id);
@@ -365,38 +192,9 @@ function createOrderQueryService(db, options = {}) {
       order.pickup_placements = placements;
       order.pickup_placement_count = placements.length;
     }
-    const managerKpiCore = db.prepare(`
-      SELECT
-        COUNT(*) AS decisions_total,
-        SUM(CASE WHEN rr.request_status IN ('declined', 'declined_waiting_return') THEN 1 ELSE 0 END) AS declined_total,
-        SUM(CASE WHEN rr.request_status IN ('approved', 'approved_waiting_transfer') THEN 1 ELSE 0 END) AS approved_total,
-        AVG((julianday(rr.decision_at) - julianday(rr.requested_at)) * 24 * 60) AS approval_minutes_avg
-      FROM rework_requests rr
-      WHERE rr.decision_at IS NOT NULL
-    `).get() || {};
-
-    const managerKpiRework = db.prepare(`
-      SELECT
-        COUNT(*) AS total_rework_baskets,
-        SUM(CASE WHEN COALESCE(b.rework_attempt, 0) > 1 THEN 1 ELSE 0 END) AS repeated_rework_baskets
-      FROM baskets b
-      WHERE COALESCE(b.basket_kind, 'main') = 'rework'
-    `).get() || {};
-
-    const managerKpiPickup = db.prepare(`
-      SELECT
-        COUNT(*) AS handoff_count,
-        AVG((julianday(p.completed_at) - julianday(o.created_at)) * 24 * 60) AS pickup_cycle_minutes_avg
-      FROM (
-        SELECT se.order_id, MAX(se.created_at) AS completed_at
-        FROM scan_events se
-        WHERE se.station = 'pickup'
-          AND se.result = 'ok'
-          AND se.message LIKE 'Выдача подтверждена%'
-        GROUP BY se.order_id
-      ) p
-      JOIN orders o ON o.id = p.order_id
-    `).get() || {};
+    const managerKpiCore = orderQueryRepository.getManagerKpiCore();
+    const managerKpiRework = orderQueryRepository.getManagerKpiRework();
+    const managerKpiPickup = orderQueryRepository.getManagerKpiPickup();
 
     const decisionsTotal = Number(managerKpiCore.decisions_total || 0);
     const declinedTotal = Number(managerKpiCore.declined_total || 0);
@@ -425,32 +223,10 @@ function createOrderQueryService(db, options = {}) {
 
   function listStationOrders(station) {
     if (station === "sorting") {
-      return db.prepare(`
-        SELECT id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight, customer_phone, customer_email, service_tier, status, cleancloud_status, ready_to_place, ready_for_pickup, updated_at
-        FROM orders
-        WHERE status IN ('sorting', 'sorted')
-        ORDER BY CASE WHEN status = 'sorting' THEN 0 ELSE 1 END, id
-      `).all().map((row) => ({ ...row, ready_to_place: Boolean(row.ready_to_place), ready_for_pickup: Boolean(row.ready_for_pickup) }));
+      return orderQueryRepository.listSortingStationOrders().map((row) => ({ ...row, ready_to_place: Boolean(row.ready_to_place), ready_for_pickup: Boolean(row.ready_for_pickup) }));
     }
 
-    return db.prepare(`
-      SELECT
-        o.id, o.public_id, o.cleancloud_order_id, o.customer_name, o.customer_id, o.order_weight,
-        o.customer_phone, o.customer_email, o.service_tier, o.status, o.cleancloud_status,
-        o.ready_to_place, o.ready_for_pickup, o.updated_at,
-        (
-          SELECT COUNT(*)
-          FROM baskets b
-          WHERE b.order_id = o.id AND b.station = ? AND b.status = ?
-        ) AS baskets_in_station
-      FROM orders o
-      WHERE EXISTS (
-        SELECT 1
-        FROM baskets b
-        WHERE b.order_id = o.id AND b.station = ? AND b.status = ?
-      )
-      ORDER BY id
-    `).all(station, station, station, station).map((row) => ({
+    return orderQueryRepository.listActiveStationOrders(station).map((row) => ({
       ...row,
       ready_to_place: Boolean(row.ready_to_place),
       ready_for_pickup: Boolean(row.ready_for_pickup)
@@ -458,23 +234,9 @@ function createOrderQueryService(db, options = {}) {
   }
 
   function getQcLiveMetrics() {
-    const basketsInQc = db.prepare(`
-      SELECT COUNT(*) AS count
-      FROM baskets
-      WHERE station = 'qc' AND status = 'qc'
-    `).get().count;
-
-    const ordersInQcQueue = db.prepare(`
-      SELECT COUNT(DISTINCT order_id) AS count
-      FROM baskets
-      WHERE station = 'qc' AND status = 'qc'
-    `).get().count;
-
-    const ordersInQcStatus = db.prepare(`
-      SELECT COUNT(*) AS count
-      FROM orders
-      WHERE status = 'qc'
-    `).get().count;
+    const basketsInQc = orderQueryRepository.countQcBaskets();
+    const ordersInQcQueue = orderQueryRepository.countQcOrdersFromBaskets();
+    const ordersInQcStatus = orderQueryRepository.countQcStatusOrders();
 
     return {
       basketsInQc,
