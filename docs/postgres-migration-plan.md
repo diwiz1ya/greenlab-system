@@ -16,6 +16,7 @@
 - DB schema parity audit доступен через `npm run audit:db-schema` и проверяет совпадение таблиц/колонок между SQLite bootstrap/migrations и PostgreSQL draft.
 - Прямые `last_insert_rowid()` убраны из workflow-кода.
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
+- Async transaction scaffold для будущего PostgreSQL adapter добавлен в `backend/db/transaction.js`; быстрый тест доступен через `npm run test:db-transactions`.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
 - Idempotency records уже вызываются через repository factory `backend/db/repositories.js`.
 - System health/sync summary reads уже вызываются через repository factory `backend/db/repositories.js`.
