@@ -2,7 +2,7 @@ const { parsePositiveInt, parseStation } = require("../http/validation");
 
 function handleCoreRoutes(req, res, url, ctx) {
   const {
-    db,
+    coreRepository,
     readJson,
     json,
     requireAuth,
@@ -66,11 +66,12 @@ function handleCoreRoutes(req, res, url, ctx) {
     if (!requireManager(session, res)) return true;
 
     seedDemoData({ force: true });
+    const counts = coreRepository.getDemoResetCounts();
     json(res, 200, {
       ok: true,
       message: "Demo data reset completed.",
-      orders: db.prepare("SELECT COUNT(*) AS count FROM orders").get().count,
-      scans: db.prepare("SELECT COUNT(*) AS count FROM scan_events").get().count
+      orders: counts.orders,
+      scans: counts.scans
     });
     return true;
   }

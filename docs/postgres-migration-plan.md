@@ -12,6 +12,7 @@
 - Прямые `last_insert_rowid()` убраны из workflow-кода.
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
+- Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 
 ## Почему нужен поэтапный переход
 
@@ -50,6 +51,8 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 
 - login/user password hash migration
 - security event insert/list
+- demo reset counters
+- scan export/recent scan reads
 
 ## Что не делать
 

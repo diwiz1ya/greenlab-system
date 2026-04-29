@@ -135,12 +135,14 @@ const { db, client: DB_CLIENT } = openDatabase({
   databaseUrl: process.env.GREENLAB_DATABASE_URL
 });
 const {
+  coreRepository,
+  scanRepository,
   securityEventRepository,
   userRepository
 } = createRepositories({ client: DB_CLIENT, db });
 
 const sessionStore = createSessionStore();
-const { getScanExportRows, getRecentScansByStation, scanRowsToCsv } = createScanExportService(db);
+const { getScanExportRows, getRecentScansByStation, scanRowsToCsv } = createScanExportService(scanRepository);
 
 const stationLabels = {
   overview: "Overview",
@@ -903,7 +905,7 @@ const authRoutesContext = {
 };
 
 const coreRoutesContext = {
-  db,
+  coreRepository,
   readJson,
   json,
   requireAuth,
