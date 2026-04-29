@@ -509,37 +509,7 @@ function createWorkflowService(options) {
       };
     }
 
-    const getBasketByQr = db.prepare(`
-      SELECT
-        b.id,
-        b.order_id,
-        b.basket_code,
-        b.qr_code,
-        b.basket_items_json,
-        b.station,
-        b.status,
-        o.public_id,
-        o.cleancloud_order_id
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-      LIMIT 1
-    `);
-    const getActiveLoadByBasketId = db.prepare(`
-      SELECT
-        ml.id AS load_id,
-        m.machine_code
-      FROM machine_load_baskets mlb
-      JOIN machine_loads ml
-        ON ml.id = mlb.load_id
-       AND ml.status = 'active'
-      JOIN laundry_machines m ON m.id = ml.machine_id
-      WHERE mlb.basket_id = ?
-        AND mlb.unloaded_at IS NULL
-      LIMIT 1
-    `);
-
-    const basket = getBasketByQr.get(basketQr);
+    const basket = workflowRepository.findMachineFlowBasketByQr(basketQr);
     if (!basket) {
       return { error: `QR code ${basketQr} was not found.`, status: 404 };
     }
@@ -562,7 +532,7 @@ function createWorkflowService(options) {
       };
     }
 
-    const activeLoad = getActiveLoadByBasketId.get(basket.id);
+    const activeLoad = workflowRepository.findActiveMachineLoadByBasketId(basket.id);
     if (activeLoad) {
       return {
         error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,
@@ -616,36 +586,6 @@ function createWorkflowService(options) {
       return { error: `Машина ${machine.display_name} уже занята активным циклом.`, status: 409 };
     }
 
-    const getBasketByQr = db.prepare(`
-      SELECT
-        b.id,
-        b.order_id,
-        b.basket_code,
-        b.qr_code,
-        b.basket_items_json,
-        b.station,
-        b.status,
-        o.public_id,
-        o.cleancloud_order_id
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-      LIMIT 1
-    `);
-    const getActiveLoadByBasketId = db.prepare(`
-      SELECT
-        ml.id AS load_id,
-        m.machine_code
-      FROM machine_load_baskets mlb
-      JOIN machine_loads ml
-        ON ml.id = mlb.load_id
-       AND ml.status = 'active'
-      JOIN laundry_machines m ON m.id = ml.machine_id
-      WHERE mlb.basket_id = ?
-        AND mlb.unloaded_at IS NULL
-      LIMIT 1
-    `);
-
     const baskets = [];
     for (const qrCode of basketQrs) {
       if (!machineFlowBasketQrPattern.test(qrCode)) {
@@ -654,7 +594,7 @@ function createWorkflowService(options) {
           status: 400
         };
       }
-      const basket = getBasketByQr.get(qrCode);
+      const basket = workflowRepository.findMachineFlowBasketByQr(qrCode);
       if (!basket) {
         return { error: `QR code ${qrCode} was not found.`, status: 404 };
       }
@@ -675,7 +615,7 @@ function createWorkflowService(options) {
           status: 409
         };
       }
-      const activeLoad = getActiveLoadByBasketId.get(basket.id);
+      const activeLoad = workflowRepository.findActiveMachineLoadByBasketId(basket.id);
       if (activeLoad) {
         return {
           error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,

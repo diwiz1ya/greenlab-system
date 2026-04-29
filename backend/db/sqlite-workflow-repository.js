@@ -138,6 +138,35 @@ function createSqliteWorkflowRepository(db) {
     WHERE mlb.load_id = ?
     ORDER BY mlb.id ASC
   `);
+  const findMachineFlowBasketByQrStmt = db.prepare(`
+    SELECT
+      b.id,
+      b.order_id,
+      b.basket_code,
+      b.qr_code,
+      b.basket_items_json,
+      b.station,
+      b.status,
+      o.public_id,
+      o.cleancloud_order_id
+    FROM baskets b
+    JOIN orders o ON o.id = b.order_id
+    WHERE b.qr_code = ?
+    LIMIT 1
+  `);
+  const findActiveMachineLoadByBasketIdStmt = db.prepare(`
+    SELECT
+      ml.id AS load_id,
+      m.machine_code
+    FROM machine_load_baskets mlb
+    JOIN machine_loads ml
+      ON ml.id = mlb.load_id
+     AND ml.status = 'active'
+    JOIN laundry_machines m ON m.id = ml.machine_id
+    WHERE mlb.basket_id = ?
+      AND mlb.unloaded_at IS NULL
+    LIMIT 1
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -153,7 +182,9 @@ function createSqliteWorkflowRepository(db) {
     updateBasketQr: ({ basketId, qrCode, timestamp }) => updateBasketQrStmt.run(qrCode, timestamp, basketId),
     getMachineWithActiveLoad: ({ station, machineCode }) => getMachineWithActiveLoadStmt.get(station, machineCode),
     listMachineWorkbenchRows: (station) => listMachineWorkbenchRowsStmt.all(station),
-    listLoadBaskets: (loadId) => listLoadBasketsStmt.all(loadId)
+    listLoadBaskets: (loadId) => listLoadBasketsStmt.all(loadId),
+    findMachineFlowBasketByQr: (qrCode) => findMachineFlowBasketByQrStmt.get(qrCode),
+    findActiveMachineLoadByBasketId: (basketId) => findActiveMachineLoadByBasketIdStmt.get(basketId)
   };
 }
 
