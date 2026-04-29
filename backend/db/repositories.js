@@ -1,4 +1,5 @@
 const { createSqliteCoreRepository } = require("./sqlite-core-repository");
+const { createSqliteDemoSeedRepository } = require("./sqlite-demo-seed-repository");
 const { createSqliteIdempotencyRepository } = require("./sqlite-idempotency-repository");
 const { createSqlitePickupWorkbenchRepository } = require("./sqlite-pickup-workbench-repository");
 const { createSqliteUserRepository } = require("./sqlite-user-repository");
@@ -14,6 +15,7 @@ function createRepositories(options = {}) {
 
   return {
     coreRepository: createSqliteCoreRepository(options.db),
+    demoSeedRepository: createSqliteDemoSeedRepository(options.db),
     idempotencyRepository: createSqliteIdempotencyRepository(options.db),
     pickupWorkbenchRepository: createSqlitePickupWorkbenchRepository(options.db),
     scanRepository: createSqliteScanRepository(options.db),

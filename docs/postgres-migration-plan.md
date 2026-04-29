@@ -14,6 +14,7 @@
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
 - Idempotency records уже вызываются через repository factory `backend/db/repositories.js`.
 - System health/sync summary reads уже вызываются через repository factory `backend/db/repositories.js`.
+- Demo seed/bootstrap SQL уже вынесен в SQLite repository, `server.js` оставляет только порядок seed-операций и очистку upload-файлов.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -55,6 +56,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 - login/user password hash migration
 - idempotency record cache
 - system health and sync queue summary reads
+- demo seed/bootstrap writes
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads

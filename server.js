@@ -136,6 +136,7 @@ const { db, client: DB_CLIENT } = openDatabase({
 });
 const {
   coreRepository,
+  demoSeedRepository,
   idempotencyRepository,
   pickupWorkbenchRepository,
   scanRepository,
@@ -260,19 +261,11 @@ function nowIso() {
 }
 
 function normalizeLegacyData() {
-  db.exec(`
-    UPDATE orders SET status = 'qc' WHERE status = 'washing_qc';
-    UPDATE baskets SET station = 'qc' WHERE station = 'washing_qc';
-    UPDATE baskets SET status = 'qc' WHERE status = 'washing_qc';
-    UPDATE users
-    SET allowed_stations = REPLACE(allowed_stations, '"washing_qc"', '"qc"')
-    WHERE allowed_stations LIKE '%washing_qc%';
-  `);
+  demoSeedRepository.normalizeLegacyData();
 }
 
 function ensureCurrentUsers() {
-  const rows = db.prepare("SELECT id, username, allowed_stations FROM users").all();
-  const updateAllowed = db.prepare("UPDATE users SET allowed_stations = ? WHERE id = ?");
+  const rows = demoSeedRepository.listUsersAllowedStations();
 
   for (const row of rows) {
     let allowedStations = [];
@@ -312,24 +305,30 @@ function ensureCurrentUsers() {
     }
 
     if (changed) {
-      updateAllowed.run(JSON.stringify(allowedStations), row.id);
+      demoSeedRepository.updateAllowedStations(row.id, JSON.stringify(allowedStations));
     }
   }
 
-  const qcUserExists = db.prepare("SELECT id FROM users WHERE username = ?").get("qc");
-  if (!qcUserExists) {
-    db.prepare(`
-      INSERT INTO users (username, password, password_hash, display_name, role, allowed_stations)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run("qc", REDACTED_PASSWORD_VALUE, hashPassword("demo123"), "Quality control operator", "qc_operator", JSON.stringify(["qc", "overview"]));
+  if (!demoSeedRepository.userExists("qc")) {
+    demoSeedRepository.insertUser({
+      username: "qc",
+      password: REDACTED_PASSWORD_VALUE,
+      passwordHash: hashPassword("demo123"),
+      displayName: "Quality control operator",
+      role: "qc_operator",
+      allowedStationsJson: JSON.stringify(["qc", "overview"])
+    });
   }
 
-  const reworkUserExists = db.prepare("SELECT id FROM users WHERE username = ?").get("rework");
-  if (!reworkUserExists) {
-    db.prepare(`
-      INSERT INTO users (username, password, password_hash, display_name, role, allowed_stations)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run("rework", REDACTED_PASSWORD_VALUE, hashPassword("demo123"), "Rework operator", "rework_operator", JSON.stringify(["rework", "overview"]));
+  if (!demoSeedRepository.userExists("rework")) {
+    demoSeedRepository.insertUser({
+      username: "rework",
+      password: REDACTED_PASSWORD_VALUE,
+      passwordHash: hashPassword("demo123"),
+      displayName: "Rework operator",
+      role: "rework_operator",
+      allowedStationsJson: JSON.stringify(["rework", "overview"])
+    });
   }
 }
 
@@ -352,62 +351,24 @@ function ensureDefaultMachines() {
     });
   }
 
-  const upsertMachine = db.prepare(`
-    INSERT INTO laundry_machines (
-      machine_code, station, machine_type, display_name, is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 1, ?, ?)
-    ON CONFLICT(machine_code) DO UPDATE SET
-      station = excluded.station,
-      machine_type = excluded.machine_type,
-      display_name = excluded.display_name,
-      is_active = 1,
-      updated_at = excluded.updated_at
-  `);
-
   for (const machine of defaultMachines) {
-    upsertMachine.run(
-      machine.code,
-      machine.station,
-      machine.type,
-      machine.displayName,
-      timestamp,
-      timestamp
-    );
+    demoSeedRepository.upsertMachine({ ...machine, timestamp });
   }
 }
 
 function ensureDefaultBasketCatalog() {
   const timestamp = nowIso();
-  const upsertBasket = db.prepare(`
-    INSERT INTO basket_catalog (
-      label, qr_code, is_active, created_at, updated_at
-    ) VALUES (?, ?, 1, ?, ?)
-    ON CONFLICT(label) DO UPDATE SET
-      qr_code = excluded.qr_code,
-      is_active = 1,
-      updated_at = excluded.updated_at
-  `);
   const catalogEntries = createDefaultBasketCatalogEntries(50);
   for (const entry of catalogEntries) {
-    upsertBasket.run(entry.label, entry.qrCode, timestamp, timestamp);
+    demoSeedRepository.upsertBasketCatalogEntry({ ...entry, timestamp });
   }
 }
 
 function ensureDefaultPickupLocations() {
   const timestamp = nowIso();
-  const upsertLocation = db.prepare(`
-    INSERT INTO pickup_locations (
-      label, qr_code, is_active, created_at, updated_at
-    ) VALUES (?, ?, 1, ?, ?)
-    ON CONFLICT(label) DO UPDATE SET
-      qr_code = excluded.qr_code,
-      is_active = 1,
-      updated_at = excluded.updated_at
-  `);
-
   const locationEntries = createDefaultPickupLocationEntries(40);
   for (const entry of locationEntries) {
-    upsertLocation.run(entry.label, entry.qrCode, timestamp, timestamp);
+    demoSeedRepository.upsertPickupLocation({ ...entry, timestamp });
   }
 }
 
@@ -415,7 +376,7 @@ function seedDemoData(options = {}) {
   const force = Boolean(options.force);
 
   if (!force) {
-    const userCount = db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+    const userCount = demoSeedRepository.countUsers();
     if (userCount > 0) {
       normalizeLegacyData();
       ensureCurrentUsers();
@@ -438,28 +399,9 @@ function seedDemoData(options = {}) {
     ["manager", "demo123", "Branch manager", "manager", ["overview", "sorting", "washing", "drying", "qc", "rework", "ironing", "pickup"]]
   ];
 
-  const insertUser = db.prepare(`
-    INSERT INTO users (username, password, password_hash, display_name, role, allowed_stations)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
   runImmediateTransaction(db, () => {
     if (force) {
-      db.exec(`
-        DELETE FROM webhook_events;
-        DELETE FROM sync_queue;
-        DELETE FROM scan_events;
-        DELETE FROM pickup_order_placements;
-        DELETE FROM pickup_locations;
-        DELETE FROM basket_images;
-        DELETE FROM machine_load_baskets;
-        DELETE FROM machine_loads;
-        DELETE FROM laundry_machines;
-        DELETE FROM rework_requests;
-        DELETE FROM baskets;
-        DELETE FROM orders;
-        DELETE FROM users;
-      `);
+      demoSeedRepository.clearDemoData();
 
       for (const entry of fs.readdirSync(BASKET_UPLOADS_DIR)) {
         const absolutePath = path.join(BASKET_UPLOADS_DIR, entry);
@@ -474,7 +416,14 @@ function seedDemoData(options = {}) {
     }
 
     for (const [username, password, displayName, role, allowedStations] of users) {
-      insertUser.run(username, REDACTED_PASSWORD_VALUE, hashPassword(password), displayName, role, JSON.stringify(allowedStations));
+      demoSeedRepository.insertUser({
+        username,
+        password: REDACTED_PASSWORD_VALUE,
+        passwordHash: hashPassword(password),
+        displayName,
+        role,
+        allowedStationsJson: JSON.stringify(allowedStations)
+      });
     }
 
     ensureDefaultMachines();
@@ -482,15 +431,34 @@ function seedDemoData(options = {}) {
     ensureDefaultPickupLocations();
 
     const timestamp = nowIso();
-    const insertOrder = db.prepare(`
-      INSERT INTO orders (
-        public_id, cleancloud_order_id, customer_name, customer_id, order_weight, customer_phone, customer_email, service_tier, status,
-        cleancloud_status, ready_for_pickup, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertOrder.run("GL-2601", "CC-2601", "Dian Saputra", null, 4.4, "+62 812 2601", null, "Premium", "sorting", "sorting", 0, timestamp, timestamp);
-    insertOrder.run("GL-2602", "CC-2602", "Lina Mahendra", null, 3.0, "+62 812 2602", null, "Express", "sorting", "sorting", 0, timestamp, timestamp);
+    demoSeedRepository.insertOrder({
+      publicId: "GL-2601",
+      cleanCloudOrderId: "CC-2601",
+      customerName: "Dian Saputra",
+      customerId: null,
+      orderWeight: 4.4,
+      customerPhone: "+62 812 2601",
+      customerEmail: null,
+      serviceTier: "Premium",
+      status: "sorting",
+      cleanCloudStatus: "sorting",
+      readyForPickup: 0,
+      timestamp
+    });
+    demoSeedRepository.insertOrder({
+      publicId: "GL-2602",
+      cleanCloudOrderId: "CC-2602",
+      customerName: "Lina Mahendra",
+      customerId: null,
+      orderWeight: 3.0,
+      customerPhone: "+62 812 2602",
+      customerEmail: null,
+      serviceTier: "Express",
+      status: "sorting",
+      cleanCloudStatus: "sorting",
+      readyForPickup: 0,
+      timestamp
+    });
   });
 
   ensurePasswordHashes(userRepository);
