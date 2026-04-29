@@ -141,6 +141,7 @@ const {
   idempotencyRepository,
   orderQueryRepository,
   pickupWorkbenchRepository,
+  reworkRepository,
   scanRepository,
   securityEventRepository,
   systemRepository,
@@ -228,6 +229,7 @@ const {
 } = createWorkflowService({
   db,
   workflowRepository,
+  reworkRepository,
   nowIso,
   basketUploadsDir: BASKET_UPLOADS_DIR,
   getOrderDetails,

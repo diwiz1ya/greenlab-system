@@ -4,6 +4,7 @@ const { createSqliteDemoSeedRepository } = require("./sqlite-demo-seed-repositor
 const { createSqliteIdempotencyRepository } = require("./sqlite-idempotency-repository");
 const { createSqliteOrderQueryRepository } = require("./sqlite-order-query-repository");
 const { createSqlitePickupWorkbenchRepository } = require("./sqlite-pickup-workbench-repository");
+const { createSqliteReworkRepository } = require("./sqlite-rework-repository");
 const { createSqliteUserRepository } = require("./sqlite-user-repository");
 const { createSqliteSecurityEventRepository } = require("./sqlite-security-event-repository");
 const { createSqliteScanRepository } = require("./sqlite-scan-repository");
@@ -23,6 +24,7 @@ function createRepositories(options = {}) {
     idempotencyRepository: createSqliteIdempotencyRepository(options.db),
     orderQueryRepository: createSqliteOrderQueryRepository(options.db),
     pickupWorkbenchRepository: createSqlitePickupWorkbenchRepository(options.db),
+    reworkRepository: createSqliteReworkRepository(options.db),
     scanRepository: createSqliteScanRepository(options.db),
     securityEventRepository: createSqliteSecurityEventRepository(options.db),
     systemRepository: createSqliteSystemRepository(options.db),

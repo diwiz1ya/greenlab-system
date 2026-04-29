@@ -10,6 +10,7 @@ function createWorkflowService(options) {
   const {
     db,
     workflowRepository,
+    reworkRepository,
     nowIso,
     basketUploadsDir,
     getOrderDetails,
@@ -80,6 +81,7 @@ function createWorkflowService(options) {
     rejectBasketFromQc
   } = createReworkWorkflow({
     db,
+    reworkRepository,
     nowIso,
     publicUploadsDir,
     getOrderDetails,

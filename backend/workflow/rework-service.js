@@ -8,6 +8,7 @@ const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 function createReworkWorkflow(options) {
   const {
     db,
+    reworkRepository,
     nowIso,
     publicUploadsDir,
     getOrderDetails,
@@ -94,12 +95,7 @@ function createReworkWorkflow(options) {
 
   function getBasketImages(basketId) {
     if (!basketId) return [];
-    return db.prepare(`
-      SELECT id, image_role, sort_order, note, public_url, created_at
-      FROM basket_images
-      WHERE basket_id = ?
-      ORDER BY sort_order, id
-    `).all(basketId).map((row) => ({
+    return reworkRepository.listBasketImages(basketId).map((row) => ({
       id: row.id,
       role: row.image_role,
       sort_order: Number(row.sort_order || 0),
@@ -229,116 +225,32 @@ function createReworkWorkflow(options) {
   }
 
   function listReworkRequestsByOrder(orderId) {
-    return db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      WHERE rr.order_id = ?
-      ORDER BY rr.id DESC
-    `).all(orderId).map(buildReworkRequestPayload);
+    return reworkRepository.listReworkRequestsByOrder(orderId).map(buildReworkRequestPayload);
   }
 
   function listPendingReworkRequestsByBasketId(basketId) {
-    return db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      WHERE rr.source_basket_id = ?
-        AND rr.request_status IN (?, ?, ?)
-      ORDER BY rr.id DESC
-    `).all(
+    return reworkRepository.listPendingReworkRequestsByBasketId({
       basketId,
-      pendingCustomerApprovalStatus,
-      approvedWaitingTransferStatus,
-      declinedWaitingReturnStatus
-    ).map(buildReworkRequestPayload);
+      statuses: [
+        pendingCustomerApprovalStatus,
+        approvedWaitingTransferStatus,
+        declinedWaitingReturnStatus
+      ]
+    }).map(buildReworkRequestPayload);
   }
 
   function getReworkRequestWithContext(requestId) {
-    return db.prepare(`
-      SELECT
-        rr.*,
-        source.order_id AS source_order_id,
-        source.basket_code AS source_basket_code,
-        source.basket_type AS source_basket_type,
-        source.basket_items_json AS source_basket_items_json,
-        source.basket_kind AS source_basket_kind,
-        source.parent_basket_id AS source_parent_basket_id,
-        source.station AS source_station,
-        source.status AS source_status,
-        source.qr_code AS source_qr_code,
-        o.public_id AS order_public_id,
-        o.cleancloud_order_id
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      JOIN orders o ON o.id = rr.order_id
-      WHERE rr.id = ?
-    `).get(requestId);
+    return reworkRepository.getReworkRequestWithContext(requestId);
   }
 
   function getQcTransferTaskWithContext(requestId) {
-    return db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        source.qr_code AS source_basket_qr_code,
-        source.basket_type AS source_basket_type,
-        source.basket_items_json AS source_basket_items_json,
-        source.basket_kind AS source_basket_kind,
-        source.parent_basket_id AS source_parent_basket_id,
-        source.station AS source_station,
-        source.status AS source_status,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code,
-        rework.station AS rework_station,
-        rework.status AS rework_status,
-        o.public_id AS order_public_id,
-        o.customer_name AS order_customer_name,
-        o.cleancloud_order_id
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      JOIN orders o ON o.id = rr.order_id
-      WHERE rr.id = ?
-    `).get(requestId);
+    return reworkRepository.getQcTransferTaskWithContext(requestId);
   }
 
   function listPendingQcTransferTasks() {
-    return db.prepare(`
-      SELECT
-        rr.*,
-        source.basket_code AS source_basket_code,
-        source.qr_code AS source_basket_qr_code,
-        source.basket_type AS source_basket_type,
-        source.basket_kind AS source_basket_kind,
-        source.parent_basket_id AS source_parent_basket_id,
-        source.station AS source_station,
-        source.status AS source_status,
-        rework.basket_code AS rework_basket_code,
-        rework.qr_code AS rework_basket_qr_code,
-        rework.station AS rework_station,
-        rework.status AS rework_status,
-        o.public_id AS order_public_id,
-        o.customer_name AS order_customer_name
-      FROM rework_requests rr
-      JOIN baskets source ON source.id = rr.source_basket_id
-      LEFT JOIN baskets rework ON rework.id = rr.rework_basket_id
-      JOIN orders o ON o.id = rr.order_id
-      WHERE rr.request_status IN (?, ?)
-        AND rr.rework_basket_id IS NULL
-        AND rr.handoff_confirmed_at IS NULL
-      ORDER BY datetime(rr.decision_at) DESC, rr.id DESC
-    `).all(approvedWaitingTransferStatus, declinedWaitingReturnStatus).map(buildQcTransferTaskPayload);
+    return reworkRepository.listPendingQcTransferTasks({
+      statuses: [approvedWaitingTransferStatus, declinedWaitingReturnStatus]
+    }).map(buildQcTransferTaskPayload);
   }
 
   function formatAllowedStationsForError(stations) {
