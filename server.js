@@ -140,6 +140,7 @@ const {
   pickupWorkbenchRepository,
   scanRepository,
   securityEventRepository,
+  systemRepository,
   userRepository
 } = createRepositories({ client: DB_CLIENT, db });
 
@@ -872,11 +873,7 @@ if (SYNC_POLL_INTERVAL_MS > 0) {
 }
 
 function getSyncQueueSummary() {
-  const rows = db.prepare(`
-    SELECT status, COUNT(*) AS count
-    FROM sync_queue
-    GROUP BY status
-  `).all();
+  const rows = systemRepository.listSyncQueueStatusCounts();
 
   return {
     pending: rows.find((row) => row.status === "pending")?.count || 0,
@@ -1013,7 +1010,7 @@ const server = http.createServer((req, res) => {
     let dbError = null;
 
     try {
-      db.prepare("SELECT 1 AS ok").get();
+      systemRepository.checkConnection();
     } catch (error) {
       dbOk = false;
       dbError = error instanceof Error ? error.message : String(error);

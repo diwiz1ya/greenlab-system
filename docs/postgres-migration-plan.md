@@ -13,6 +13,7 @@
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
 - Idempotency records уже вызываются через repository factory `backend/db/repositories.js`.
+- System health/sync summary reads уже вызываются через repository factory `backend/db/repositories.js`.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -53,6 +54,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 
 - login/user password hash migration
 - idempotency record cache
+- system health and sync queue summary reads
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads

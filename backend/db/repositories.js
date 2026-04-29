@@ -4,6 +4,7 @@ const { createSqlitePickupWorkbenchRepository } = require("./sqlite-pickup-workb
 const { createSqliteUserRepository } = require("./sqlite-user-repository");
 const { createSqliteSecurityEventRepository } = require("./sqlite-security-event-repository");
 const { createSqliteScanRepository } = require("./sqlite-scan-repository");
+const { createSqliteSystemRepository } = require("./sqlite-system-repository");
 
 function createRepositories(options = {}) {
   const client = String(options.client || "sqlite").trim().toLowerCase();
@@ -17,6 +18,7 @@ function createRepositories(options = {}) {
     pickupWorkbenchRepository: createSqlitePickupWorkbenchRepository(options.db),
     scanRepository: createSqliteScanRepository(options.db),
     securityEventRepository: createSqliteSecurityEventRepository(options.db),
+    systemRepository: createSqliteSystemRepository(options.db),
     userRepository: createSqliteUserRepository(options.db)
   };
 }
