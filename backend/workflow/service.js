@@ -439,26 +439,7 @@ function createWorkflowService(options) {
   }
 
   function getMachineWithActiveLoad(station, machineCode) {
-    return db.prepare(`
-      SELECT
-        m.id,
-        m.machine_code,
-        m.station,
-        m.machine_type,
-        m.display_name,
-        m.is_active,
-        ml.id AS active_load_id,
-        ml.started_at AS active_load_started_at,
-        ml.started_by AS active_load_started_by
-      FROM laundry_machines m
-      LEFT JOIN machine_loads ml
-        ON ml.machine_id = m.id
-       AND ml.status = 'active'
-      WHERE m.station = ?
-        AND m.machine_code = ?
-        AND m.is_active = 1
-      LIMIT 1
-    `).get(station, machineCode);
+    return workflowRepository.getMachineWithActiveLoad({ station, machineCode });
   }
 
   function listMachineWorkbench(station) {
@@ -466,61 +447,7 @@ function createWorkflowService(options) {
       return { error: "Станция машинного цикла доступна только для стирки и сушки.", status: 400 };
     }
 
-    const machineRows = db.prepare(`
-      SELECT
-        m.id,
-        m.machine_code,
-        m.station,
-        m.machine_type,
-        m.display_name,
-        ml.id AS active_load_id,
-        ml.status AS active_load_status,
-        ml.started_at AS active_load_started_at,
-        ml.started_by AS active_load_started_by,
-        ml.completed_at AS active_load_completed_at,
-        ml.completed_by AS active_load_completed_by,
-        (
-          SELECT COUNT(*)
-          FROM machine_load_baskets mlb
-          WHERE mlb.load_id = ml.id
-        ) AS active_load_baskets_count,
-        (
-          SELECT COUNT(*)
-          FROM machine_load_baskets mlb
-          WHERE mlb.load_id = ml.id
-            AND mlb.unloaded_at IS NOT NULL
-        ) AS active_load_unloaded_count
-      FROM laundry_machines m
-      LEFT JOIN machine_loads ml
-        ON ml.id = (
-          SELECT ml2.id
-          FROM machine_loads ml2
-          WHERE ml2.machine_id = m.id
-            AND ml2.status = 'active'
-          ORDER BY ml2.created_at DESC, ml2.id DESC
-          LIMIT 1
-        )
-      WHERE m.station = ?
-        AND m.is_active = 1
-      ORDER BY m.machine_code ASC
-    `).all(station);
-
-    const listLoadBaskets = db.prepare(`
-      SELECT
-        b.id,
-        b.basket_code,
-        b.qr_code,
-        b.station,
-        b.status,
-        o.public_id,
-        mlb.unloaded_at,
-        mlb.unloaded_by
-      FROM machine_load_baskets mlb
-      JOIN baskets b ON b.id = mlb.basket_id
-      JOIN orders o ON o.id = b.order_id
-      WHERE mlb.load_id = ?
-      ORDER BY mlb.id ASC
-    `);
+    const machineRows = workflowRepository.listMachineWorkbenchRows(station);
 
     const machines = machineRows.map((row) => {
       const hasActiveLoad = Number(row.active_load_id || 0) > 0;
@@ -535,7 +462,7 @@ function createWorkflowService(options) {
             completed_by: row.active_load_completed_by || null,
             baskets_count: Number(row.active_load_baskets_count || 0),
             unloaded_baskets_count: Number(row.active_load_unloaded_count || 0),
-            baskets: listLoadBaskets.all(row.active_load_id).map((basket) => ({
+            baskets: workflowRepository.listLoadBaskets(row.active_load_id).map((basket) => ({
               id: basket.id,
               basket_code: basket.basket_code,
               qr_code: basket.qr_code,

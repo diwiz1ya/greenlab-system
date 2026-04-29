@@ -18,6 +18,7 @@
 - Order detail/overview/station-list reads уже вынесены в SQLite repository, `backend/orders/queries.js` оставляет сборку DTO для UI.
 - CleanCloud sync queue, webhook and contact enrichment SQL уже вынесены в SQLite repository, `backend/cleancloud/service.js` оставляет API-вызовы и бизнес-решения.
 - Workflow progress/pickup invariant reads and pickup flag writes уже частично вынесены в SQLite repository.
+- Machine workbench reads уже вынесены в SQLite workflow repository.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -63,6 +64,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 - order detail/overview/station-list reads
 - cleancloud sync queue/webhook/contact enrichment reads and writes
 - workflow progress/pickup invariant reads and pickup flag writes
+- machine workbench reads
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads
