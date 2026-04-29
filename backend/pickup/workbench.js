@@ -1,18 +1,8 @@
-function createPickupWorkbenchService(db, options = {}) {
+function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
   void options;
-  const excludedAssemblyStations = ["rework_transferred", "archived"];
-  const excludedPlaceholders = excludedAssemblyStations.map(() => "?").join(", ");
 
   function getOrderAssemblyProgress(orderId) {
-    const row = db.prepare(`
-      SELECT
-        COUNT(*) AS total_baskets,
-        SUM(CASE WHEN station = 'pickup' AND status = 'pickup' THEN 1 ELSE 0 END) AS baskets_at_pickup
-      FROM baskets
-      WHERE order_id = ?
-        AND station = status
-        AND station NOT IN (${excludedPlaceholders})
-    `).get(orderId, ...excludedAssemblyStations);
+    const row = pickupWorkbenchRepository.getOrderAssemblyProgressRow(orderId);
 
     const totalOrderBaskets = Number(row?.total_baskets || 0);
     const basketsAtPickup = Number(row?.baskets_at_pickup || 0);
@@ -24,26 +14,7 @@ function createPickupWorkbenchService(db, options = {}) {
   }
 
   function getPickupScanProgress(orderId) {
-    const rows = db.prepare(`
-      SELECT
-        b.id,
-        b.basket_code,
-        b.qr_code,
-        EXISTS (
-          SELECT 1
-          FROM scan_events se
-          WHERE se.order_id = b.order_id
-            AND se.basket_id = b.id
-            AND se.station = 'pickup'
-            AND se.result = 'ok'
-          LIMIT 1
-        ) AS scanned
-      FROM baskets b
-      WHERE b.order_id = ?
-        AND b.station = b.status
-        AND b.station NOT IN (${excludedPlaceholders})
-      ORDER BY b.id
-    `).all(orderId, ...excludedAssemblyStations);
+    const rows = pickupWorkbenchRepository.listPickupScanProgressRows(orderId);
 
     const baskets = rows.map((row) => ({
       id: row.id,
@@ -63,20 +34,7 @@ function createPickupWorkbenchService(db, options = {}) {
   }
 
   function getPickupPlacementRows(orderId) {
-    return db.prepare(`
-      SELECT
-        p.slot_index,
-        p.bin_qr_code,
-        p.location_qr_code,
-        l.label AS location_label,
-        p.placed_by,
-        p.placed_at
-      FROM pickup_order_placements p
-      LEFT JOIN pickup_locations l ON l.qr_code = p.location_qr_code
-      WHERE p.order_id = ?
-        AND p.released_at IS NULL
-      ORDER BY p.slot_index ASC, p.id ASC
-    `).all(orderId).map((row) => ({
+    return pickupWorkbenchRepository.listPickupPlacementRows(orderId).map((row) => ({
       slot_index: Number(row.slot_index || 0),
       bin_qr_code: String(row.bin_qr_code || "").trim(),
       location_qr_code: String(row.location_qr_code || "").trim(),
@@ -108,51 +66,17 @@ function createPickupWorkbenchService(db, options = {}) {
   }
 
   function listAssemblyOrders() {
-    const rows = db.prepare(`
-      SELECT
-        id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight,
-        customer_phone, customer_email, service_tier, status, cleancloud_status,
-        ready_to_place, ready_for_pickup, updated_at
-      FROM orders
-      WHERE COALESCE(ready_for_pickup, 0) = 0
-        AND COALESCE(ready_to_place, 0) = 0
-        AND EXISTS (
-          SELECT 1
-          FROM baskets b
-          WHERE b.order_id = orders.id
-            AND b.station = 'pickup'
-            AND b.status = 'pickup'
-        )
-      ORDER BY id
-    `).all();
+    const rows = pickupWorkbenchRepository.listAssemblyOrders();
     return rows.map(buildPickupOrderRow);
   }
 
   function listReadyToPlaceOrders() {
-    const rows = db.prepare(`
-      SELECT
-        id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight,
-        customer_phone, customer_email, service_tier, status, cleancloud_status,
-        ready_to_place, ready_for_pickup, updated_at
-      FROM orders
-      WHERE COALESCE(ready_for_pickup, 0) = 0
-        AND COALESCE(ready_to_place, 0) = 1
-      ORDER BY id
-    `).all();
+    const rows = pickupWorkbenchRepository.listReadyToPlaceOrders();
     return rows.map(buildPickupOrderRow);
   }
 
   function listPlacedOrders() {
-    const rows = db.prepare(`
-      SELECT
-        id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight,
-        customer_phone, customer_email, service_tier, status, cleancloud_status,
-        ready_to_place, ready_for_pickup, updated_at
-      FROM orders
-      WHERE status = 'pickup'
-        AND COALESCE(ready_for_pickup, 0) = 1
-      ORDER BY id
-    `).all();
+    const rows = pickupWorkbenchRepository.listPlacedOrders();
     return rows.map(buildPickupOrderRow);
   }
 

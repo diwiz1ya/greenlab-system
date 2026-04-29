@@ -136,6 +136,7 @@ const { db, client: DB_CLIENT } = openDatabase({
 });
 const {
   coreRepository,
+  pickupWorkbenchRepository,
   scanRepository,
   securityEventRepository,
   userRepository
@@ -176,7 +177,7 @@ const { getOrderDetails, getOverview, listStationOrders, getQcLiveMetrics } = cr
   stationLabels,
   holdStation: HOLD_STATION
 });
-const { getPickupScanProgress, getPickupWorkbenchSnapshot } = createPickupWorkbenchService(db, {
+const { getPickupScanProgress, getPickupWorkbenchSnapshot } = createPickupWorkbenchService(pickupWorkbenchRepository, {
   pickupScanOkMessage: PICKUP_SCAN_OK_MESSAGE
 });
 const {
