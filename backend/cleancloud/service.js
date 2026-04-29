@@ -2,7 +2,7 @@ const crypto = require("crypto");
 
 function createCleanCloudService(options) {
   const {
-    db,
+    cleanCloudRepository,
     apiBase,
     apiToken,
     syncRetryLimit = 5,
@@ -124,21 +124,13 @@ function createCleanCloudService(options) {
   function queueSync(orderId, action, payload) {
     const createdAt = nowIso();
     const payloadJson = JSON.stringify(payload);
-    const duplicate = db.prepare(`
-      SELECT id
-      FROM sync_queue
-      WHERE order_id = ? AND action = ? AND payload = ? AND status IN ('pending', 'processing')
-      LIMIT 1
-    `).get(orderId, action, payloadJson);
+    const duplicate = cleanCloudRepository.findPendingSyncDuplicate(orderId, action, payloadJson);
 
     if (duplicate) {
       return { ok: true, queued: false, reason: "duplicate" };
     }
 
-    db.prepare(`
-      INSERT INTO sync_queue (order_id, action, payload, status, created_at, processed_at, attempts, last_error)
-      VALUES (?, ?, ?, 'pending', ?, NULL, 0, NULL)
-    `).run(orderId, action, payloadJson, createdAt);
+    cleanCloudRepository.insertSyncQueueItem({ orderId, action, payloadJson, createdAt });
     return { ok: true, queued: true };
   }
 
@@ -207,11 +199,7 @@ function createCleanCloudService(options) {
   }
 
   async function enrichOrderContactFromCleanCloud(orderId, actor) {
-    const order = db.prepare(`
-      SELECT id, public_id, cleancloud_order_id, customer_name, customer_id, order_weight, customer_phone, customer_email
-      FROM orders
-      WHERE id = ?
-    `).get(orderId);
+    const order = cleanCloudRepository.findOrderContactById(orderId);
     if (!order) {
       return { error: "Order not found", status: 404 };
     }
@@ -251,8 +239,7 @@ function createCleanCloudService(options) {
     }
 
     const updatedParts = [];
-    const updates = [];
-    const params = [];
+    const updates = {};
 
     const oldCustomerId = toNullableTrimmedText(order.customer_id);
     const oldWeight = toNullableWeight(order.order_weight);
@@ -261,39 +248,28 @@ function createCleanCloudService(options) {
     const oldName = toNullableTrimmedText(order.customer_name);
 
     if (customerId && customerId !== oldCustomerId) {
-      updates.push("customer_id = ?");
-      params.push(customerId);
+      updates.customer_id = customerId;
     }
     if (weight !== null && weight !== oldWeight) {
-      updates.push("order_weight = ?");
-      params.push(weight);
+      updates.order_weight = weight;
       updatedParts.push(`weight: ${weight} kg`);
     }
     if (customerPhone && customerPhone !== oldPhone) {
-      updates.push("customer_phone = ?");
-      params.push(customerPhone);
+      updates.customer_phone = customerPhone;
       updatedParts.push(`phone: ${customerPhone}`);
     }
     if (customerEmail && customerEmail !== oldEmail) {
-      updates.push("customer_email = ?");
-      params.push(customerEmail);
+      updates.customer_email = customerEmail;
       updatedParts.push(`email: ${customerEmail}`);
     }
     if (customerName && customerName !== oldName) {
-      updates.push("customer_name = ?");
-      params.push(customerName);
+      updates.customer_name = customerName;
       updatedParts.push(`name: ${customerName}`);
     }
 
     const timestamp = nowIso();
-    if (updates.length > 0) {
-      updates.push("updated_at = ?");
-      params.push(timestamp, orderId);
-      db.prepare(`
-        UPDATE orders
-        SET ${updates.join(", ")}
-        WHERE id = ?
-      `).run(...params);
+    if (Object.keys(updates).length > 0) {
+      cleanCloudRepository.updateOrderContact(orderId, updates, timestamp);
     }
 
     const updateSummary = updatedParts.length
@@ -301,10 +277,12 @@ function createCleanCloudService(options) {
       : "CleanCloud responded, but no new data (weight/phone/email) was found.";
 
     if (updatedParts.length > 0) {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, NULL, 'overview', ?, 'ok', ?, ?)
-      `).run(orderId, actor, updateSummary, timestamp);
+      cleanCloudRepository.insertOverviewScanEvent({
+        orderId,
+        actor,
+        message: updateSummary,
+        timestamp
+      });
     }
 
     return {
@@ -315,11 +293,7 @@ function createCleanCloudService(options) {
   }
 
   function markSyncQueueProcessed(id, note = null) {
-    db.prepare(`
-      UPDATE sync_queue
-      SET status = 'processed', processed_at = ?, last_error = ?
-      WHERE id = ?
-    `).run(nowIso(), note, id);
+    cleanCloudRepository.markSyncQueueProcessed({ id, processedAt: nowIso(), note });
   }
 
   function normalizeSyncQueueError(errorText) {
@@ -355,48 +329,26 @@ function createCleanCloudService(options) {
     const status = shouldFail ? "failed" : "pending";
     const processedAt = shouldFail ? nowIso() : null;
     const errorMessage = normalizeSyncQueueError(errorText);
-    db.prepare(`
-      UPDATE sync_queue
-      SET status = ?, attempts = ?, last_error = ?, processed_at = ?
-      WHERE id = ?
-    `).run(status, nextAttempts, errorMessage, processedAt, id);
+    cleanCloudRepository.markSyncQueueRetry({
+      id,
+      status,
+      attempts: nextAttempts,
+      errorMessage,
+      processedAt
+    });
   }
 
   function keepSyncQueuePending(id, errorText) {
     const errorMessage = normalizeSyncQueueError(errorText);
-    db.prepare(`
-      UPDATE sync_queue
-      SET status = 'pending', last_error = ?, processed_at = NULL
-      WHERE id = ?
-    `).run(errorMessage, id);
+    cleanCloudRepository.keepSyncQueuePending({ id, errorMessage });
   }
 
   function listPendingSyncItems(limit = 20, orderId = null) {
-    if (Number.isFinite(orderId) && orderId > 0) {
-      return db.prepare(`
-        SELECT id, action, payload, attempts
-        FROM sync_queue
-        WHERE status = 'pending' AND order_id = ?
-        ORDER BY id
-        LIMIT ?
-      `).all(orderId, limit);
-    }
-
-    return db.prepare(`
-      SELECT id, action, payload, attempts
-      FROM sync_queue
-      WHERE status = 'pending'
-      ORDER BY id
-      LIMIT ?
-    `).all(limit);
+    return cleanCloudRepository.listPendingSyncItems({ limit, orderId });
   }
 
   function retryFailedSyncByOrder(orderId) {
-    const totalRows = db.prepare(`
-      SELECT COUNT(*) AS count
-      FROM sync_queue
-      WHERE order_id = ?
-    `).get(orderId).count;
+    const totalRows = cleanCloudRepository.countSyncQueueItemsByOrder(orderId);
 
     if (!totalRows) {
       return {
@@ -405,11 +357,7 @@ function createCleanCloudService(options) {
       };
     }
 
-    const failedRows = db.prepare(`
-      UPDATE sync_queue
-      SET status = 'pending', attempts = 0, last_error = NULL, processed_at = NULL
-      WHERE order_id = ? AND status = 'failed'
-    `).run(orderId).changes;
+    const failedRows = cleanCloudRepository.retryFailedSyncItemsByOrder(orderId);
 
     return {
       ok: true,
@@ -433,7 +381,7 @@ function createCleanCloudService(options) {
 
     try {
       for (const item of pending) {
-        db.prepare("UPDATE sync_queue SET status = 'processing' WHERE id = ? AND status = 'pending'").run(item.id);
+        cleanCloudRepository.markSyncQueueProcessing(item.id);
 
         if (item.action !== "cleancloud.status") {
           markSyncQueueProcessed(item.id, "Skipped unsupported action");
@@ -481,24 +429,14 @@ function createCleanCloudService(options) {
   }
 
   function listSyncQueueItems(limit = 25) {
-    return db.prepare(`
-      SELECT id, order_id, action, payload, status, attempts, last_error, created_at, processed_at
-      FROM sync_queue
-      ORDER BY id DESC
-      LIMIT ?
-    `).all(limit).map((item) => ({
+    return cleanCloudRepository.listSyncQueueItems(limit).map((item) => ({
       ...item,
       last_error: item.last_error ? normalizeSyncQueueError(item.last_error) : null
     }));
   }
 
   function listWebhookEvents(limit = 25) {
-    return db.prepare(`
-      SELECT id, source, event_key, status, message, received_at, processed_at
-      FROM webhook_events
-      ORDER BY id DESC
-      LIMIT ?
-    `).all(limit);
+    return cleanCloudRepository.listWebhookEvents(limit);
   }
 
   function getWebhookEventKey(payload) {
@@ -530,24 +468,14 @@ function createCleanCloudService(options) {
       return { status: "ignored", message: "Unsupported or missing webhook status." };
     }
 
-    const order = db.prepare(`
-      SELECT id, public_id, status, ready_for_pickup
-      FROM orders
-      WHERE cleancloud_order_id = ?
-    `).get(cleanCloudOrderId);
+    const order = cleanCloudRepository.findOrderByCleanCloudOrderId(cleanCloudOrderId);
 
     if (!order) {
       return { status: "ignored", message: `No local order mapped to cleancloud_order_id=${cleanCloudOrderId}.` };
     }
 
     if (localStatus.status === "pickup") {
-      const basketSnapshot = db.prepare(`
-        SELECT
-          COUNT(*) AS total_baskets,
-          SUM(CASE WHEN station = 'pickup' AND status = 'pickup' THEN 1 ELSE 0 END) AS pickup_baskets
-        FROM baskets
-        WHERE order_id = ?
-      `).get(order.id);
+      const basketSnapshot = cleanCloudRepository.getOrderBasketPickupSnapshot(order.id);
       const totalBaskets = Number(basketSnapshot?.total_baskets || 0);
       const pickupBaskets = Number(basketSnapshot?.pickup_baskets || 0);
 
@@ -566,16 +494,20 @@ function createCleanCloudService(options) {
     }
 
     const timestamp = nowIso();
-    db.prepare(`
-      UPDATE orders
-      SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = ?, updated_at = ?
-      WHERE id = ?
-    `).run(localStatus.status, localStatus.cleancloudStatus, localStatus.readyForPickup ? 1 : 0, timestamp, order.id);
+    cleanCloudRepository.updateOrderFromWebhook({
+      orderId: order.id,
+      status: localStatus.status,
+      cleancloudStatus: localStatus.cleancloudStatus,
+      readyForPickup: localStatus.readyForPickup,
+      timestamp
+    });
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, NULL, 'overview', 'cleancloud_webhook', 'ok', ?, ?)
-    `).run(order.id, `Webhook updated order ${order.public_id}: ${localStatus.cleancloudStatus}.`, timestamp);
+    cleanCloudRepository.insertOverviewScanEvent({
+      orderId: order.id,
+      actor: "cleancloud_webhook",
+      message: `Webhook updated order ${order.public_id}: ${localStatus.cleancloudStatus}.`,
+      timestamp
+    });
 
     return {
       status: "processed",
@@ -588,10 +520,12 @@ function createCleanCloudService(options) {
     const receivedAt = nowIso();
 
     try {
-      db.prepare(`
-        INSERT INTO webhook_events (source, event_key, payload, status, message, received_at, processed_at)
-        VALUES (?, ?, ?, 'received', 'Received webhook', ?, NULL)
-      `).run(source, eventKey, JSON.stringify(payload || {}), receivedAt);
+      cleanCloudRepository.insertWebhookEvent({
+        source,
+        eventKey,
+        payloadJson: JSON.stringify(payload || {}),
+        receivedAt
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("UNIQUE constraint failed")) {
@@ -606,11 +540,12 @@ function createCleanCloudService(options) {
     }
 
     const result = applyCleanCloudWebhookPayload(payload || {});
-    db.prepare(`
-      UPDATE webhook_events
-      SET status = ?, message = ?, processed_at = ?
-      WHERE event_key = ?
-    `).run(result.status, result.message, nowIso(), eventKey);
+    cleanCloudRepository.updateWebhookEvent({
+      eventKey,
+      status: result.status,
+      message: result.message,
+      processedAt: nowIso()
+    });
 
     return {
       ok: true,

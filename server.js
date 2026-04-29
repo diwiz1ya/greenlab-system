@@ -135,6 +135,7 @@ const { db, client: DB_CLIENT } = openDatabase({
   databaseUrl: process.env.GREENLAB_DATABASE_URL
 });
 const {
+  cleanCloudRepository,
   coreRepository,
   demoSeedRepository,
   idempotencyRepository,
@@ -196,7 +197,7 @@ const {
   listWebhookEvents,
   handleCleanCloudWebhook
 } = createCleanCloudService({
-  db,
+  cleanCloudRepository,
   apiBase: CLEAN_CLOUD_API_BASE,
   apiToken: CLEAN_CLOUD_API_TOKEN,
   syncRetryLimit: CLEAN_CLOUD_SYNC_RETRY_LIMIT,
