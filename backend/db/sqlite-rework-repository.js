@@ -171,6 +171,48 @@ function createSqliteReworkRepository(db) {
     WHERE id = ?
       AND request_status = ?
   `);
+  const updateReturnTaskConfirmationStmt = db.prepare(`
+    UPDATE rework_requests
+    SET request_status = ?, decision_actor = ?, decision_at = ?,
+        decision_note = ?, handoff_confirmed_by = ?, handoff_confirmed_at = ?, handoff_note = ?, updated_at = ?
+    WHERE id = ?
+      AND request_status = ?
+      AND handoff_confirmed_at IS NULL
+  `);
+  const insertReworkBasketStmt = db.prepare(`
+    INSERT INTO baskets (
+      order_id, basket_code, basket_type, basket_items_json, basket_kind, parent_basket_id,
+      rework_reason, rework_attempt, station, status, qr_code, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, 'rework', ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateSourceBasketAfterTransferStmt = db.prepare(`
+    UPDATE baskets
+    SET basket_items_json = ?, station = ?, status = ?, updated_at = ?
+    WHERE id = ?
+      AND station = ?
+      AND status = ?
+  `);
+  const updateTransferTaskConfirmationStmt = db.prepare(`
+    UPDATE rework_requests
+    SET rework_basket_id = ?, request_status = ?, decision_actor = ?, decision_at = ?,
+        decision_note = ?, handoff_confirmed_by = ?, handoff_confirmed_at = ?, handoff_note = ?, updated_at = ?
+    WHERE id = ?
+      AND request_status = ?
+      AND rework_basket_id IS NULL
+      AND handoff_confirmed_at IS NULL
+  `);
+  const updateOrderBasketsToHoldStmt = db.prepare(`
+    UPDATE baskets
+    SET station = ?, status = ?, updated_at = ?
+    WHERE order_id = ?
+      AND station = status
+  `);
+  const updateOrderToHoldStmt = db.prepare(`
+    UPDATE orders
+    SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
+    WHERE id = ?
+  `);
 
   return {
     listBasketImages: (basketId) => listBasketImagesStmt.all(basketId),
@@ -274,6 +316,109 @@ function createSqliteReworkRepository(db) {
       timestamp,
       requestId,
       expectedStatus
+    ),
+    confirmReturnTask: ({
+      requestId,
+      requestStatus,
+      decisionActor,
+      decisionAt,
+      decisionNote,
+      handoffActor,
+      handoffAt,
+      handoffNote,
+      expectedStatus
+    }) => updateReturnTaskConfirmationStmt.run(
+      requestStatus,
+      decisionActor,
+      decisionAt,
+      decisionNote,
+      handoffActor,
+      handoffAt,
+      handoffNote,
+      handoffAt,
+      requestId,
+      expectedStatus
+    ),
+    createReworkBasket: ({
+      orderId,
+      basketCode,
+      basketType,
+      basketItemsJson,
+      rootBasketId,
+      reasonCode,
+      attempt,
+      station,
+      qrCode,
+      timestamp
+    }) => {
+      const result = insertReworkBasketStmt.run(
+        orderId,
+        basketCode,
+        basketType,
+        basketItemsJson,
+        rootBasketId,
+        reasonCode,
+        attempt,
+        station,
+        station,
+        qrCode,
+        timestamp,
+        timestamp
+      );
+      return getLastInsertRowId(result, "rework basket");
+    },
+    updateSourceBasketAfterTransfer: ({
+      sourceBasketId,
+      basketItemsJson,
+      station,
+      status,
+      timestamp,
+      expectedStation,
+      expectedStatus
+    }) => updateSourceBasketAfterTransferStmt.run(
+      basketItemsJson,
+      station,
+      status,
+      timestamp,
+      sourceBasketId,
+      expectedStation,
+      expectedStatus
+    ),
+    confirmTransferTask: ({
+      requestId,
+      reworkBasketId,
+      requestStatus,
+      decisionActor,
+      decisionAt,
+      decisionNote,
+      handoffActor,
+      handoffAt,
+      handoffNote,
+      expectedStatus
+    }) => updateTransferTaskConfirmationStmt.run(
+      reworkBasketId,
+      requestStatus,
+      decisionActor,
+      decisionAt,
+      decisionNote,
+      handoffActor,
+      handoffAt,
+      handoffNote,
+      handoffAt,
+      requestId,
+      expectedStatus
+    ),
+    updateOrderBasketsToHold: ({ orderId, holdStation, timestamp }) => updateOrderBasketsToHoldStmt.run(
+      holdStation,
+      holdStation,
+      timestamp,
+      orderId
+    ),
+    updateOrderToHold: ({ orderId, holdStation, holdCloudStatus, timestamp }) => updateOrderToHoldStmt.run(
+      holdStation,
+      holdCloudStatus,
+      timestamp,
+      orderId
     )
   };
 }

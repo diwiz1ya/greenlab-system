@@ -2,12 +2,10 @@
 
 const fs = require("fs");
 const path = require("path");
-const { getLastInsertRowId } = require("../db/statement-result");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
 
 function createReworkWorkflow(options) {
   const {
-    db,
     reworkRepository,
     nowIso,
     publicUploadsDir,
@@ -312,53 +310,44 @@ function createReworkWorkflow(options) {
 
     if (isReturnToFlow) {
       if (request.source_station !== "qc") {
-        const moveSourceToQc = db.prepare(`
-          UPDATE baskets
-          SET station = 'qc', status = 'qc', updated_at = ?
-          WHERE id = ?
-            AND station = ?
-            AND status = ?
-        `).run(timestamp, request.source_basket_id, customerApprovalStation, customerApprovalStation);
+        const moveSourceToQc = reworkRepository.updateBasketStationStatusIfCurrent({
+          basketId: request.source_basket_id,
+          station: "qc",
+          status: "qc",
+          timestamp,
+          expectedStation: customerApprovalStation,
+          expectedStatus: customerApprovalStation
+        });
         if (!moveSourceToQc.changes) {
           return { error: "Источник изменился во время подтверждения. Обновите задачи и повторите.", status: 409 };
         }
       }
 
-      const updateReturnTask = db.prepare(`
-        UPDATE rework_requests
-        SET request_status = ?, decision_actor = ?, decision_at = ?,
-            decision_note = ?, handoff_confirmed_by = ?, handoff_confirmed_at = ?, handoff_note = ?, updated_at = ?
-        WHERE id = ?
-          AND request_status = ?
-          AND handoff_confirmed_at IS NULL
-      `).run(
-        declinedRequestStatus,
-        request.decision_actor || actor,
-        request.decision_at || timestamp,
-        request.decision_note,
-        actor,
-        timestamp,
-        note,
-        timestamp,
+      const updateReturnTask = reworkRepository.confirmReturnTask({
         requestId,
-        declinedWaitingReturnStatus
-      );
+        requestStatus: declinedRequestStatus,
+        decisionActor: request.decision_actor || actor,
+        decisionAt: request.decision_at || timestamp,
+        decisionNote: request.decision_note,
+        handoffActor: actor,
+        handoffAt: timestamp,
+        handoffNote: note,
+        expectedStatus: declinedWaitingReturnStatus
+      });
       if (!updateReturnTask.changes) {
         return { error: "Задача уже обработана или изменена другим пользователем.", status: 409 };
       }
 
       refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'ok', ?, ?)
-      `).run(
-        request.order_id,
-        request.source_basket_id,
+      reworkRepository.insertScanOkEvent({
+        orderId: request.order_id,
+        basketId: request.source_basket_id,
+        station: "qc",
         actor,
-        "QC подтвердил возврат вещи в основной поток после отказа клиента от доработки.",
+        message: "QC подтвердил возврат вещи в основной поток после отказа клиента от доработки.",
         timestamp
-      );
+      });
 
       return {
         ok: true,
@@ -409,85 +398,58 @@ function createReworkWorkflow(options) {
     const reworkItemCounts = buildSingleItemCounts(itemCategory, quantity);
     const nextSourceStation = remainingCounts.total > 0 ? "qc" : inactiveReworkSourceState;
 
-    const insertReworkBasketResult = db.prepare(`
-      INSERT INTO baskets (
-        order_id, basket_code, basket_type, basket_items_json, basket_kind, parent_basket_id,
-        rework_reason, rework_attempt, station, status, qr_code, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, 'rework', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      request.order_id,
-      reworkBasketCode,
-      request.source_basket_type,
-      itemCountsToJson(reworkItemCounts),
+    const reworkBasketId = reworkRepository.createReworkBasket({
+      orderId: request.order_id,
+      basketCode: reworkBasketCode,
+      basketType: request.source_basket_type,
+      basketItemsJson: itemCountsToJson(reworkItemCounts),
       rootBasketId,
-      request.reason_code,
+      reasonCode: request.reason_code,
       attempt,
-      reworkStation,
-      reworkStation,
-      expectedTargetQrCode,
-      timestamp,
+      station: reworkStation,
+      qrCode: expectedTargetQrCode,
       timestamp
-    );
+    });
 
-    const reworkBasketId = getLastInsertRowId(insertReworkBasketResult, "rework basket");
-
-    const updateSourceBasketAfterTransfer = db.prepare(`
-      UPDATE baskets
-      SET basket_items_json = ?, station = ?, status = ?, updated_at = ?
-      WHERE id = ?
-        AND station = ?
-        AND status = ?
-    `).run(
-      itemCountsToJson(remainingCounts),
-      nextSourceStation,
-      nextSourceStation,
+    const updateSourceBasketAfterTransfer = reworkRepository.updateSourceBasketAfterTransfer({
+      sourceBasketId: request.source_basket_id,
+      basketItemsJson: itemCountsToJson(remainingCounts),
+      station: nextSourceStation,
+      status: nextSourceStation,
       timestamp,
-      request.source_basket_id,
-      customerApprovalStation,
-      customerApprovalStation
-    );
+      expectedStation: customerApprovalStation,
+      expectedStatus: customerApprovalStation
+    });
     if (!updateSourceBasketAfterTransfer.changes) {
       return { error: "Источник изменился во время подтверждения. Обновите задачи и повторите.", status: 409 };
     }
 
-    const updateTransferTask = db.prepare(`
-      UPDATE rework_requests
-      SET rework_basket_id = ?, request_status = ?, decision_actor = ?, decision_at = ?,
-          decision_note = ?, handoff_confirmed_by = ?, handoff_confirmed_at = ?, handoff_note = ?, updated_at = ?
-      WHERE id = ?
-        AND request_status = ?
-        AND rework_basket_id IS NULL
-        AND handoff_confirmed_at IS NULL
-    `).run(
-      reworkBasketId,
-      approvedRequestStatus,
-      request.decision_actor || actor,
-      request.decision_at || timestamp,
-      request.decision_note,
-      actor,
-      timestamp,
-      note,
-      timestamp,
+    const updateTransferTask = reworkRepository.confirmTransferTask({
       requestId,
-      approvedWaitingTransferStatus
-    );
+      reworkBasketId,
+      requestStatus: approvedRequestStatus,
+      decisionActor: request.decision_actor || actor,
+      decisionAt: request.decision_at || timestamp,
+      decisionNote: request.decision_note,
+      handoffActor: actor,
+      handoffAt: timestamp,
+      handoffNote: note,
+      expectedStatus: approvedWaitingTransferStatus
+    });
     if (!updateTransferTask.changes) {
       return { error: "Задача уже обработана или изменена другим пользователем.", status: 409 };
     }
 
     refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, 'qc', ?, 'ok', ?, ?)
-    `).run(
-      request.order_id,
-      request.source_basket_id,
+    reworkRepository.insertScanOkEvent({
+      orderId: request.order_id,
+      basketId: request.source_basket_id,
+      station: "qc",
       actor,
-      `QC подтвердил передачу проблемной вещи в корзину доработки ${reworkBasketCode}.`,
+      message: `QC подтвердил передачу проблемной вещи в корзину доработки ${reworkBasketCode}.`,
       timestamp
-    );
+    });
 
     return {
       ok: true,
@@ -939,29 +901,15 @@ function createReworkWorkflow(options) {
       return validationError;
     }
 
-    db.prepare(`
-      UPDATE baskets
-      SET station = ?, status = ?, updated_at = ?
-      WHERE order_id = ?
-        AND station = status
-    `).run(holdStation, holdStation, timestamp, orderId);
-
-    db.prepare(`
-      UPDATE orders
-      SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(holdStation, holdCloudStatus, timestamp, orderId);
-
-    db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-    `).run(
+    reworkRepository.updateOrderBasketsToHold({ orderId, holdStation, timestamp });
+    reworkRepository.updateOrderToHold({ orderId, holdStation, holdCloudStatus, timestamp });
+    reworkRepository.insertQcScanErrorEvent({
       orderId,
-      basket.id,
+      basketId: basket.id,
       actor,
-      `QC: обнаружена проблема (${issueLabel}). Заказ переведён в HOLD, требуется решение менеджера.`,
+      message: `QC: обнаружена проблема (${issueLabel}). Заказ переведён в HOLD, требуется решение менеджера.`,
       timestamp
-    );
+    });
 
     return {
       status: 200,

@@ -28,7 +28,7 @@
 - Workflow HOLD release reads/writes уже вынесены в SQLite workflow repository.
 - Workflow pickup placement reads/writes уже вынесены в SQLite workflow repository.
 - Workflow pickup completion reads/writes уже вынесены в SQLite workflow repository.
-- Rework list/context reads, QC basket lookup/error events, QC rework request creation и customer approval decisions уже вынесены в SQLite rework repository.
+- Rework list/context reads, QC basket lookup/error events, QC rework request creation, customer approval decisions, QC transfer confirmations и HOLD transitions уже вынесены в SQLite rework repository.
 - Core reset counters и scan export/recent scans уже вынесены в SQLite repositories.
 - Pickup workbench reads уже вынесены в SQLite repository, сам pickup-сервис больше не держит SQL для сборки экрана.
 
@@ -84,7 +84,7 @@ SQLite-only runtime, backup and transaction code сейчас собран в `b
 - workflow HOLD release reads/writes
 - workflow pickup placement reads/writes
 - workflow pickup completion reads/writes
-- rework list/context reads, QC basket lookup/error events, QC rework request creation, and customer approval decisions
+- rework list/context reads, QC basket lookup/error events, QC rework request creation, customer approval decisions, QC transfer confirmations, and HOLD transitions
 - security event insert/list
 - demo reset counters
 - scan export/recent scan reads
