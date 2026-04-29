@@ -144,7 +144,8 @@ const {
   scanRepository,
   securityEventRepository,
   systemRepository,
-  userRepository
+  userRepository,
+  workflowRepository
 } = createRepositories({ client: DB_CLIENT, db });
 
 const sessionStore = createSessionStore();
@@ -226,6 +227,7 @@ const {
   placeOrderForPickup
 } = createWorkflowService({
   db,
+  workflowRepository,
   nowIso,
   basketUploadsDir: BASKET_UPLOADS_DIR,
   getOrderDetails,

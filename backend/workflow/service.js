@@ -9,6 +9,7 @@ const { createSortingWorkflow } = require("./sorting-service");
 function createWorkflowService(options) {
   const {
     db,
+    workflowRepository,
     nowIso,
     basketUploadsDir,
     getOrderDetails,
@@ -54,11 +55,7 @@ function createWorkflowService(options) {
   const pickupLocationQrPattern = /^QR:LOC-[A-Z]\d{2}$/;
 
   // Normalize any unknown legacy statuses to active so unload keeps working.
-  db.prepare(`
-    UPDATE machine_loads
-    SET status = 'active'
-    WHERE status NOT IN ('active', 'completed', 'cancelled')
-  `).run();
+  workflowRepository.normalizeMachineLoadStatuses();
 
   const { createBaskets, updateSortedBaskets, returnSortedOrderToSorting } = createSortingWorkflow({
     db,
@@ -108,14 +105,7 @@ function createWorkflowService(options) {
   });
 
   function getOrderProgressFromBaskets(orderId) {
-    const rows = db.prepare(`
-      SELECT station, COUNT(*) AS count
-      FROM baskets
-      WHERE order_id = ?
-        AND station = status
-        AND station != 'archived'
-      GROUP BY station
-    `).all(orderId);
+    const rows = workflowRepository.listOrderProgressStations(orderId);
 
     if (!rows.length) {
       return {
@@ -165,21 +155,13 @@ function createWorkflowService(options) {
   }
 
   function syncPickupAssemblyFlags(orderId, timestamp) {
-    const order = db.prepare(`
-      SELECT id, status, ready_for_pickup
-      FROM orders
-      WHERE id = ?
-    `).get(orderId);
+    const order = workflowRepository.findPickupAssemblyOrder(orderId);
     if (!order) {
       return { readyToPlace: false, progress: { totalBaskets: 0, scannedBaskets: 0, complete: false, baskets: [] } };
     }
 
     if (order.status !== "pickup" || Boolean(order.ready_for_pickup)) {
-      db.prepare(`
-        UPDATE orders
-        SET ready_to_place = 0, updated_at = ?
-        WHERE id = ?
-      `).run(timestamp, orderId);
+      workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace: false, timestamp });
       return {
         readyToPlace: false,
         progress: getPickupScanProgress(orderId)
@@ -191,11 +173,7 @@ function createWorkflowService(options) {
     if (readyToPlace) {
       releasePickupAssemblyBins(orderId, timestamp);
     }
-    db.prepare(`
-      UPDATE orders
-      SET ready_to_place = ?, updated_at = ?
-      WHERE id = ?
-    `).run(readyToPlace ? 1 : 0, timestamp, orderId);
+    workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace, timestamp });
 
     return {
       readyToPlace,
@@ -204,30 +182,13 @@ function createWorkflowService(options) {
   }
 
   function getPickupInvariantState(orderId) {
-    const order = db.prepare(`
-      SELECT id, public_id, status, ready_to_place, ready_for_pickup
-      FROM orders
-      WHERE id = ?
-      LIMIT 1
-    `).get(orderId);
+    const order = workflowRepository.findPickupInvariantOrder(orderId);
     if (!order) {
       return null;
     }
 
-    const baskets = db.prepare(`
-      SELECT id, basket_code, qr_code, station, status
-      FROM baskets
-      WHERE order_id = ?
-        AND status != 'archived'
-      ORDER BY id ASC
-    `).all(orderId);
-    const activePlacements = db.prepare(`
-      SELECT slot_index, bin_qr_code, location_qr_code
-      FROM pickup_order_placements
-      WHERE order_id = ?
-        AND released_at IS NULL
-      ORDER BY slot_index ASC, id ASC
-    `).all(orderId);
+    const baskets = workflowRepository.listActiveBasketsByOrder(orderId);
+    const activePlacements = workflowRepository.listActivePickupPlacementsByOrder(orderId);
     const progress = getPickupScanProgress(orderId);
 
     return {
@@ -368,11 +329,12 @@ function createWorkflowService(options) {
     const next = getOrderProgressFromBaskets(orderId);
 
     if (next.status === "pickup") {
-      db.prepare(`
-        UPDATE orders
-        SET status = ?, cleancloud_status = ?, updated_at = ?
-        WHERE id = ?
-      `).run(next.status, next.cleancloudStatus, timestamp, orderId);
+      workflowRepository.updateOrderStatusForPickup({
+        orderId,
+        status: next.status,
+        cleancloudStatus: next.cleancloudStatus,
+        timestamp
+      });
       const pickupFlags = syncPickupAssemblyFlags(orderId, timestamp);
       return {
         ...next,
@@ -380,11 +342,12 @@ function createWorkflowService(options) {
       };
     }
 
-    db.prepare(`
-      UPDATE orders
-      SET status = ?, cleancloud_status = ?, ready_to_place = 0, ready_for_pickup = 0, updated_at = ?
-      WHERE id = ?
-    `).run(next.status, next.cleancloudStatus, timestamp, orderId);
+    workflowRepository.updateOrderStatusAndClearPickupFlags({
+      orderId,
+      status: next.status,
+      cleancloudStatus: next.cleancloudStatus,
+      timestamp
+    });
 
     return next;
   }
@@ -449,20 +412,8 @@ function createWorkflowService(options) {
   }
 
   function releasePickupAssemblyBins(orderId, timestamp) {
-    const rows = db.prepare(`
-      SELECT id, basket_code, qr_code
-      FROM baskets
-      WHERE order_id = ?
-        AND station = 'pickup'
-        AND status = 'pickup'
-    `).all(orderId);
+    const rows = workflowRepository.listPickupAssemblyBaskets(orderId);
     if (!rows.length) return;
-
-    const updateBasketQr = db.prepare(`
-      UPDATE baskets
-      SET qr_code = ?, updated_at = ?
-      WHERE id = ?
-    `);
 
     for (const row of rows) {
       const basketCode = String(row.basket_code || "").trim().toUpperCase();
@@ -473,7 +424,7 @@ function createWorkflowService(options) {
       if (currentQr === nextQr) continue;
       if (!pickupBinQrPattern.test(currentQr)) continue;
 
-      updateBasketQr.run(nextQr, timestamp, row.id);
+      workflowRepository.updateBasketQr({ basketId: row.id, qrCode: nextQr, timestamp });
     }
   }
 

@@ -8,6 +8,7 @@ const { createSqliteUserRepository } = require("./sqlite-user-repository");
 const { createSqliteSecurityEventRepository } = require("./sqlite-security-event-repository");
 const { createSqliteScanRepository } = require("./sqlite-scan-repository");
 const { createSqliteSystemRepository } = require("./sqlite-system-repository");
+const { createSqliteWorkflowRepository } = require("./sqlite-workflow-repository");
 
 function createRepositories(options = {}) {
   const client = String(options.client || "sqlite").trim().toLowerCase();
@@ -25,7 +26,8 @@ function createRepositories(options = {}) {
     scanRepository: createSqliteScanRepository(options.db),
     securityEventRepository: createSqliteSecurityEventRepository(options.db),
     systemRepository: createSqliteSystemRepository(options.db),
-    userRepository: createSqliteUserRepository(options.db)
+    userRepository: createSqliteUserRepository(options.db),
+    workflowRepository: createSqliteWorkflowRepository(options.db)
   };
 }
 
