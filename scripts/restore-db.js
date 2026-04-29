@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
+const { validateSqliteFile } = require("../backend/db/sqlite-maintenance");
 
 const rootDir = path.resolve(__dirname, "..");
 const dataDir = path.join(rootDir, "data");
@@ -47,22 +47,6 @@ function resolveBackupPath() {
   return "";
 }
 
-function validateSqliteFile(filePath) {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Backup file does not exist: ${filePath}`);
-  }
-  const db = new DatabaseSync(filePath);
-  try {
-    const row = db.prepare("PRAGMA integrity_check;").get();
-    const ok = row && String(row.integrity_check || "").toLowerCase() === "ok";
-    if (!ok) {
-      throw new Error(`integrity_check failed for ${filePath}`);
-    }
-  } finally {
-    db.close();
-  }
-}
-
 function snapshotCurrentDb() {
   if (!fs.existsSync(targetDbPath)) return null;
   fs.mkdirSync(snapshotDir, { recursive: true });
@@ -96,6 +80,11 @@ function run() {
   }
 
   validateSqliteFile(backupPath);
+  if (hasFlag("dry-run")) {
+    console.log(`Restore dry run OK: ${backupPath} -> ${targetDbPath}`);
+    return;
+  }
+
   const snapshot = restoreFromBackup(backupPath);
 
   console.log(`Restore completed: ${backupPath} -> ${targetDbPath}`);

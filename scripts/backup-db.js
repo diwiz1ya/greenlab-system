@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
+const { createSqliteBackup, validateSqliteFile } = require("../backend/db/sqlite-maintenance");
 
 const rootDir = path.resolve(__dirname, "..");
 const dataDir = path.join(rootDir, "data");
@@ -13,10 +13,6 @@ function parseNumberFlag(name, fallback) {
   if (!arg) return fallback;
   const value = Number(arg.split("=")[1]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function sqlLiteral(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function nowStamp() {
@@ -46,19 +42,6 @@ function pruneBackups(maxKeep) {
   return extra.length;
 }
 
-function validateBackup(filePath) {
-  const db = new DatabaseSync(filePath);
-  try {
-    const row = db.prepare("PRAGMA integrity_check;").get();
-    const ok = row && String(row.integrity_check || "").toLowerCase() === "ok";
-    if (!ok) {
-      throw new Error(`integrity_check failed for ${filePath}`);
-    }
-  } finally {
-    db.close();
-  }
-}
-
 function run() {
   const keep = parseNumberFlag("keep", 14);
 
@@ -70,16 +53,9 @@ function run() {
   const backupName = `${backupPrefix}-${nowStamp()}.sqlite`;
   const backupPath = path.join(backupDir, backupName);
 
-  const db = new DatabaseSync(dbPath);
-  try {
-    db.exec("PRAGMA busy_timeout = 5000;");
-    db.exec("PRAGMA wal_checkpoint(PASSIVE);");
-    db.exec(`VACUUM INTO ${sqlLiteral(backupPath)};`);
-  } finally {
-    db.close();
-  }
+  createSqliteBackup(dbPath, backupPath);
 
-  validateBackup(backupPath);
+  validateSqliteFile(backupPath);
   const removed = pruneBackups(keep);
 
   console.log(`Backup created: ${backupPath}`);

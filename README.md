@@ -172,6 +172,7 @@ PDF сохраняется в `output/bin-qr-labels-001-050.pdf`.
 
 - backup SQLite: `npm run backup:db`
 - restore из последнего backup: `npm run restore:db`
+- безопасная проверка restore: `npm run restore:db -- --dry-run`
 - ротация логов: `npm run rotate:logs`
 - мониторинг здоровья: `npm run monitor:health`
 - ежедневный пакет: `npm run ops:daily`

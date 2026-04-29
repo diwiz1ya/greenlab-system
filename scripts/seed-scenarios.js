@@ -1,6 +1,6 @@
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
 const { runImmediateTransaction } = require("../backend/db/transaction");
+const { openSqliteDatabase } = require("../backend/db/sqlite");
 
 const PASSWORD = "demo123";
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "data", "greenlab-demo.sqlite");
@@ -258,7 +258,7 @@ async function seedSortingAndSortedScenario(config) {
   const baseUrl = await detectBaseUrl();
   await resetDemo(baseUrl);
 
-  const db = new DatabaseSync(config.dbPath);
+  const db = openSqliteDatabase({ dbPath: config.dbPath });
   try {
     const extraOrdersNeeded = Math.max(0, config.unsorted + config.sorted - 2);
     const inserted = insertSortingOrders(db, extraOrdersNeeded);

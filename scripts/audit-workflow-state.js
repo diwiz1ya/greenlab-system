@@ -1,5 +1,5 @@
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
+const { openSqliteDatabase } = require("../backend/db/sqlite");
 
 const DEFAULT_DB_PATH = path.join(__dirname, "..", "data", "greenlab-demo.sqlite");
 
@@ -320,7 +320,11 @@ function printHumanReport(report, dbPath) {
 
 function run() {
   const config = parseArgs(process.argv.slice(2));
-  const db = new DatabaseSync(config.dbPath, { readOnly: true });
+  const db = openSqliteDatabase({
+    dbPath: config.dbPath,
+    readOnly: true,
+    applySchema: false
+  });
 
   try {
     const report = runAudit(db);

@@ -38,12 +38,12 @@ db.exec(sql)
 
 Текущий baseline после первого cleanup:
 
-- `npm run audit:db` - 207 findings
-- high: `9`
-- medium: `191`
+- `npm run audit:db` - 197 findings
+- high: `0`
+- medium: `190`
 - low: `7`
 
-Оставшиеся high-блокеры в основном относятся к SQLite-only ops/demo scripts (`backup-db`, `restore-db`, `audit-workflow-state`, `seed-scenarios`) и будут заменяться отдельными PostgreSQL-командами после подключения реального PostgreSQL-драйвера.
+SQLite-only runtime, backup and transaction code сейчас собран в `backend/db`. Дальше нужно не бороться с high-блокерами, а постепенно переводить `db.prepare(...).get/all/run` на будущий async repository/query слой.
 
 ## Что не делать
 

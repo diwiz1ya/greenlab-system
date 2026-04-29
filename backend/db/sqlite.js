@@ -10,9 +10,17 @@ function openSqliteDatabase(options = {}) {
     throw new Error("SQLite database path is required.");
   }
 
-  const db = new DatabaseSync(dbPath);
-  applySqliteBootstrapSchema(db);
-  ensureSqliteSchema(db);
+  const openOptions = {};
+  if (options.readOnly) {
+    openOptions.readOnly = true;
+  }
+
+  const db = new DatabaseSync(dbPath, openOptions);
+  const shouldApplySchema = options.applySchema !== false && !options.readOnly;
+  if (shouldApplySchema) {
+    applySqliteBootstrapSchema(db);
+    ensureSqliteSchema(db);
+  }
   return db;
 }
 
