@@ -23,6 +23,7 @@
     "seed:scenario": "node scripts/seed-scenarios.js",
     "smoke:live": "node scripts/smoke-live-flow.js",
     "audit:workflow": "node scripts/audit-workflow-state.js",
+    "audit:db-boundaries": "node scripts/audit-db-boundaries.js",
     "audit:db": "node scripts/audit-db-portability.js",
     "ops:daily": "node scripts/backup-db.js --keep=21 && node scripts/rotate-logs.js --max-mb=10 --keep=7 && node scripts/monitor-health.js --max-failed=0 --max-pending=20 --max-processing=10"
   },

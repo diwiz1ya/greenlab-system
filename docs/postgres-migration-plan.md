@@ -9,6 +9,7 @@
 - `GREENLAB_DB_CLIENT=sqlite` остается рабочим режимом по умолчанию.
 - `GREENLAB_DB_CLIENT=postgres` намеренно не запускает приложение, пока запросы не переведены на асинхронный PostgreSQL-адаптер.
 - SQL portability audit доступен через `npm run audit:db`.
+- DB boundary audit доступен через `npm run audit:db-boundaries` и проверяет, что runtime-сервисы не используют `db.prepare/db.exec` вне `backend/db`.
 - Прямые `last_insert_rowid()` убраны из workflow-кода.
 - Прямые `BEGIN IMMEDIATE` из runtime/workflow-кода сведены к `backend/db/transaction.js`.
 - Auth/users и security events уже вызываются через repository factory `backend/db/repositories.js`.
