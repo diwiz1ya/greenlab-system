@@ -14,7 +14,7 @@
     "export:training:pdf": "node scripts/export-training-pdf.js",
     "export:training:ru:full": "node scripts/export-training-ru-full-pdf.js",
     "labels:baskets": "python scripts/generate_bin_qr_labels.py",
-    "test:all": "node scripts/test-all.js",
+    "test:all": "npm run audit:db-boundaries && node scripts/test-all.js",
     "backup:db": "node scripts/backup-db.js",
     "restore:db": "node scripts/restore-db.js --latest",
     "db:doctor": "node scripts/db-doctor.js",
