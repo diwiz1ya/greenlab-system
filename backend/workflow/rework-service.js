@@ -498,28 +498,20 @@ function createReworkWorkflow(options) {
   }
 
   function getBasketWithOrderByQr(qrCode) {
-    return db.prepare(`
-      SELECT b.*, o.cleancloud_order_id, o.id AS order_db_id, o.public_id
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-    `).get(qrCode);
+    return reworkRepository.findBasketWithOrderByQr(qrCode);
   }
 
   function validateQcActionBasket(basket, actor, timestamp, failurePrefix) {
     const orderId = basket.order_db_id;
 
     if (basket.status !== basket.station) {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-      `).run(
+      reworkRepository.insertQcScanErrorEvent({
         orderId,
-        basket.id,
+        basketId: basket.id,
         actor,
-        `${failurePrefix}: неконсистентное состояние корзины (status != station).`,
+        message: `${failurePrefix}: неконсистентное состояние корзины (status != station).`,
         timestamp
-      );
+      });
 
       return {
         status: 409,
@@ -531,16 +523,13 @@ function createReworkWorkflow(options) {
     }
 
     if (basket.station !== "qc") {
-      db.prepare(`
-        INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-        VALUES (?, ?, 'qc', ?, 'error', ?, ?)
-      `).run(
+      reworkRepository.insertQcScanErrorEvent({
         orderId,
-        basket.id,
+        basketId: basket.id,
         actor,
-        `${failurePrefix}: корзина находится на станции ${getStationLabel(basket.station)}.`,
+        message: `${failurePrefix}: корзина находится на станции ${getStationLabel(basket.station)}.`,
         timestamp
-      );
+      });
 
       return {
         status: 409,
@@ -561,12 +550,7 @@ function createReworkWorkflow(options) {
   }
 
   function getNextReworkAttempt(orderId, rootBasketId) {
-    const row = db.prepare(`
-      SELECT COALESCE(MAX(rework_attempt), 0) AS max_attempt
-      FROM baskets
-      WHERE order_id = ? AND parent_basket_id = ?
-    `).get(orderId, rootBasketId);
-    return Number(row?.max_attempt || 0) + 1;
+    return reworkRepository.getNextReworkAttempt({ orderId, rootBasketId });
   }
 
   function buildReworkBasketCode(orderPublicId, attempt) {
@@ -577,20 +561,7 @@ function createReworkWorkflow(options) {
   }
 
   function inspectQcBasket(qrCode) {
-    const basket = db.prepare(`
-      SELECT
-        b.*,
-        o.id AS order_db_id,
-        o.public_id,
-        o.customer_name,
-        o.order_weight,
-        o.customer_phone,
-        o.customer_email,
-        o.cleancloud_status
-      FROM baskets b
-      JOIN orders o ON o.id = b.order_id
-      WHERE b.qr_code = ?
-    `).get(qrCode);
+    const basket = reworkRepository.findQcBasketForInspection(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };

@@ -98,6 +98,35 @@ function createSqliteReworkRepository(db) {
       AND rr.handoff_confirmed_at IS NULL
     ORDER BY datetime(rr.decision_at) DESC, rr.id DESC
   `);
+  const findBasketWithOrderByQrStmt = db.prepare(`
+    SELECT b.*, o.cleancloud_order_id, o.id AS order_db_id, o.public_id
+    FROM baskets b
+    JOIN orders o ON o.id = b.order_id
+    WHERE b.qr_code = ?
+  `);
+  const getNextReworkAttemptStmt = db.prepare(`
+    SELECT COALESCE(MAX(rework_attempt), 0) AS max_attempt
+    FROM baskets
+    WHERE order_id = ? AND parent_basket_id = ?
+  `);
+  const findQcBasketForInspectionStmt = db.prepare(`
+    SELECT
+      b.*,
+      o.id AS order_db_id,
+      o.public_id,
+      o.customer_name,
+      o.order_weight,
+      o.customer_phone,
+      o.customer_email,
+      o.cleancloud_status
+    FROM baskets b
+    JOIN orders o ON o.id = b.order_id
+    WHERE b.qr_code = ?
+  `);
+  const insertQcScanErrorEventStmt = db.prepare(`
+    INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
+    VALUES (?, ?, 'qc', ?, 'error', ?, ?)
+  `);
 
   return {
     listBasketImages: (basketId) => listBasketImagesStmt.all(basketId),
@@ -105,7 +134,20 @@ function createSqliteReworkRepository(db) {
     listPendingReworkRequestsByBasketId: ({ basketId, statuses }) => listPendingReworkRequestsByBasketIdStmt.all(basketId, ...statuses),
     getReworkRequestWithContext: (requestId) => getReworkRequestWithContextStmt.get(requestId),
     getQcTransferTaskWithContext: (requestId) => getQcTransferTaskWithContextStmt.get(requestId),
-    listPendingQcTransferTasks: ({ statuses }) => listPendingQcTransferTasksStmt.all(...statuses)
+    listPendingQcTransferTasks: ({ statuses }) => listPendingQcTransferTasksStmt.all(...statuses),
+    findBasketWithOrderByQr: (qrCode) => findBasketWithOrderByQrStmt.get(qrCode),
+    getNextReworkAttempt: ({ orderId, rootBasketId }) => {
+      const row = getNextReworkAttemptStmt.get(orderId, rootBasketId);
+      return Number(row?.max_attempt || 0) + 1;
+    },
+    findQcBasketForInspection: (qrCode) => findQcBasketForInspectionStmt.get(qrCode),
+    insertQcScanErrorEvent: ({ orderId, basketId, actor, message, timestamp }) => insertQcScanErrorEventStmt.run(
+      orderId,
+      basketId,
+      actor,
+      message,
+      timestamp
+    )
   };
 }
 
