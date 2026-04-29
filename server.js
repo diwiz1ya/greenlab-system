@@ -968,9 +968,9 @@ const apiRouteHandlers = [
   (req, res, url) => handleOrderRoutes(req, res, url, orderRoutesContext)
 ];
 
-function routeApi(req, res, url) {
+async function routeApi(req, res, url) {
   for (const handler of apiRouteHandlers) {
-    if (handler(req, res, url)) {
+    if (await handler(req, res, url)) {
       return true;
     }
   }
@@ -1010,9 +1010,15 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname.startsWith("/api/")) {
-    if (!routeApi(req, res, url)) {
-    json(res, 404, { error: "Not found" });
-    }
+    routeApi(req, res, url)
+      .then((handled) => {
+        if (!handled) {
+          json(res, 404, { error: "Not found" });
+        }
+      })
+      .catch((error) => {
+        json(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      });
     return;
   }
 
