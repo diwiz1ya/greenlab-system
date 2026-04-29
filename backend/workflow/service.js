@@ -821,18 +821,7 @@ function createWorkflowService(options) {
   }
 
   function cancelMachineLoad(loadId, actor, options = {}) {
-    const load = db.prepare(`
-      SELECT
-        ml.id,
-        ml.station,
-        ml.status,
-        m.machine_code,
-        m.display_name
-      FROM machine_loads ml
-      JOIN laundry_machines m ON m.id = ml.machine_id
-      WHERE ml.id = ?
-      LIMIT 1
-    `).get(loadId);
+    const load = workflowRepository.getMachineLoadById(loadId);
 
     if (!load) {
       return { error: "Машинный цикл не найден.", status: 404 };
@@ -844,36 +833,21 @@ function createWorkflowService(options) {
       return { error: `Цикл относится к станции ${getStationLabel(load.station)}, а не ${getStationLabel(options.expectedStation)}.`, status: 409 };
     }
 
-    const baskets = db.prepare(`
-      SELECT b.id, b.order_id
-      FROM machine_load_baskets mlb
-      JOIN baskets b ON b.id = mlb.basket_id
-      WHERE mlb.load_id = ?
-    `).all(loadId);
+    const baskets = workflowRepository.listMachineLoadBasketOrderRefs(loadId);
     const timestamp = nowIso();
-
-    const markCancelled = db.prepare(`
-      UPDATE machine_loads
-      SET status = 'cancelled', cancelled_by = ?, cancelled_at = ?, updated_at = ?
-      WHERE id = ?
-    `);
-    const insertScanEvent = db.prepare(`
-      INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
-      VALUES (?, ?, ?, ?, 'ok', ?, ?)
-    `);
 
     try {
       runImmediateTransaction(db, () => {
-        markCancelled.run(actor, timestamp, timestamp, load.id);
+        workflowRepository.cancelMachineLoad({ loadId: load.id, actor, timestamp });
         for (const basket of baskets) {
-          insertScanEvent.run(
-            basket.order_id,
-            basket.id,
-            load.station,
+          workflowRepository.insertScanEvent({
+            orderId: basket.order_id,
+            basketId: basket.id,
+            station: load.station,
             actor,
-            `Цикл ${load.display_name} (${load.machine_code}) отменен оператором.`,
+            message: `Цикл ${load.display_name} (${load.machine_code}) отменен оператором.`,
             timestamp
-          );
+          });
         }
       });
     } catch (error) {

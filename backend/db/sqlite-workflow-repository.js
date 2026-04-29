@@ -257,6 +257,17 @@ function createSqliteWorkflowRepository(db) {
     WHERE load_id = ?
       AND unloaded_at IS NULL
   `);
+  const listMachineLoadBasketOrderRefsStmt = db.prepare(`
+    SELECT b.id, b.order_id
+    FROM machine_load_baskets mlb
+    JOIN baskets b ON b.id = mlb.basket_id
+    WHERE mlb.load_id = ?
+  `);
+  const cancelMachineLoadStmt = db.prepare(`
+    UPDATE machine_loads
+    SET status = 'cancelled', cancelled_by = ?, cancelled_at = ?, updated_at = ?
+    WHERE id = ?
+  `);
 
   return {
     normalizeMachineLoadStatuses: () => normalizeMachineLoadStatusesStmt.run(),
@@ -286,7 +297,9 @@ function createSqliteWorkflowRepository(db) {
     rebindBasketQr: ({ basketId, qrCode, timestamp }) => rebindBasketQrStmt.run(qrCode, timestamp, basketId),
     moveBasketToStation: ({ basketId, station, timestamp }) => moveBasketToStationStmt.run(station, station, timestamp, basketId),
     markMachineLoadCompletedIfEmpty: ({ loadId, timestamp }) => markMachineLoadCompletedIfEmptyStmt.run(timestamp, loadId, loadId),
-    countPendingMachineLoadBaskets: (loadId) => Number(countPendingMachineLoadBasketsStmt.get(loadId)?.pending_count || 0)
+    countPendingMachineLoadBaskets: (loadId) => Number(countPendingMachineLoadBasketsStmt.get(loadId)?.pending_count || 0),
+    listMachineLoadBasketOrderRefs: (loadId) => listMachineLoadBasketOrderRefsStmt.all(loadId),
+    cancelMachineLoad: ({ loadId, actor, timestamp }) => cancelMachineLoadStmt.run(actor, timestamp, timestamp, loadId)
   };
 }
 
