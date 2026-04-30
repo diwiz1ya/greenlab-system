@@ -17,6 +17,7 @@ const { createPostgresDemoSeedRepository } = require("./postgres-demo-seed-repos
 const { createPostgresIdempotencyRepository } = require("./postgres-idempotency-repository");
 const { createPostgresOrderQueryRepository } = require("./postgres-order-query-repository");
 const { createPostgresPickupWorkbenchRepository } = require("./postgres-pickup-workbench-repository");
+const { createPostgresReworkRepository } = require("./postgres-rework-repository");
 const { createPostgresScanRepository } = require("./postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("./postgres-security-event-repository");
 const { createPostgresSortingRepository } = require("./postgres-sorting-repository");
@@ -30,6 +31,7 @@ const POSTGRES_READY_REPOSITORIES = [
   "idempotencyRepository",
   "orderQueryRepository",
   "pickupWorkbenchRepository",
+  "reworkRepository",
   "scanRepository",
   "securityEventRepository",
   "sortingRepository",
@@ -38,7 +40,6 @@ const POSTGRES_READY_REPOSITORIES = [
 ];
 
 const POSTGRES_BLOCKED_REPOSITORIES = [
-  "reworkRepository",
   "workflowRepository"
 ];
 
@@ -74,6 +75,7 @@ function createPostgresRepositories(options = {}) {
     idempotencyRepository: createPostgresIdempotencyRepository(options.db),
     orderQueryRepository: createPostgresOrderQueryRepository(options.db),
     pickupWorkbenchRepository: createPostgresPickupWorkbenchRepository(options.db),
+    reworkRepository: createPostgresReworkRepository(options.db),
     scanRepository: createPostgresScanRepository(options.db),
     securityEventRepository: createPostgresSecurityEventRepository(options.db),
     sortingRepository: createPostgresSortingRepository(options.db),
