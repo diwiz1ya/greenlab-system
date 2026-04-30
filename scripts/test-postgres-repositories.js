@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { createPostgresCleanCloudRepository } = require("../backend/db/postgres-cleancloud-repository");
 const { createPostgresCoreRepository } = require("../backend/db/postgres-core-repository");
 const { createPostgresDemoSeedRepository } = require("../backend/db/postgres-demo-seed-repository");
 const { createPostgresIdempotencyRepository } = require("../backend/db/postgres-idempotency-repository");
@@ -79,6 +80,152 @@ function createFakeQueryable(results = []) {
   assert.deepEqual(securityDb.calls[2].params, [5]);
   assert.match(securityDb.calls[1].sql, /WHERE category = \$1/);
   assert.match(securityDb.calls[2].sql, /LIMIT \$1/);
+
+  const cleanCloudDb = createFakeQueryable([
+    { rows: [{ id: 41 }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ id: 2601, public_id: "GL-2601" }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ id: 51, action: "cleancloud.status" }], rowCount: 1 },
+    { rows: [{ id: 52, action: "cleancloud.status" }], rowCount: 1 },
+    { rows: [{ count: "9" }], rowCount: 1 },
+    { rows: [], rowCount: 2 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ id: 61, status: "pending" }], rowCount: 1 },
+    { rows: [{ id: 71, status: "processed" }], rowCount: 1 },
+    { rows: [{ id: 2601, public_id: "GL-2601" }], rowCount: 1 },
+    { rows: [{ total_baskets: 2, pickup_baskets: 1 }], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 }
+  ]);
+  const cleanCloudRepository = createPostgresCleanCloudRepository(cleanCloudDb);
+  assert.deepEqual(
+    await cleanCloudRepository.findPendingSyncDuplicate(2601, "cleancloud.status", "{\"status\":\"ready\"}"),
+    { id: 41 }
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.insertSyncQueueItem({
+      orderId: 2601,
+      action: "cleancloud.status",
+      payloadJson: "{\"status\":\"ready\"}",
+      createdAt: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(await cleanCloudRepository.findOrderContactById(2601), {
+    id: 2601,
+    public_id: "GL-2601"
+  });
+  assert.deepEqual(
+    await cleanCloudRepository.updateOrderContact(
+      2601,
+      { customer_phone: "+62 812", order_weight: 4.5 },
+      "2026-04-29T08:00:00.000Z"
+    ),
+    { changes: 1 }
+  );
+  assert.deepEqual(await cleanCloudRepository.updateOrderContact(2601, {}, "2026-04-29T08:00:00.000Z"), {
+    changes: 0
+  });
+  await assert.rejects(
+    () => cleanCloudRepository.updateOrderContact(2601, { status: "pickup" }, "2026-04-29T08:00:00.000Z"),
+    /Unsupported order contact column/
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.insertOverviewScanEvent({
+      orderId: 2601,
+      actor: "manager",
+      message: "Updated",
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.markSyncQueueProcessed({
+      id: 51,
+      processedAt: "2026-04-29T08:01:00.000Z",
+      note: "ok"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.markSyncQueueRetry({
+      id: 52,
+      status: "failed",
+      attempts: 3,
+      errorMessage: "timeout",
+      processedAt: "2026-04-29T08:02:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(await cleanCloudRepository.keepSyncQueuePending({ id: 53, errorMessage: "retry" }), {
+    changes: 1
+  });
+  assert.deepEqual(await cleanCloudRepository.listPendingSyncItems({ limit: 10, orderId: 2601 }), [
+    { id: 51, action: "cleancloud.status" }
+  ]);
+  assert.deepEqual(await cleanCloudRepository.listPendingSyncItems({ limit: 5 }), [
+    { id: 52, action: "cleancloud.status" }
+  ]);
+  assert.equal(await cleanCloudRepository.countSyncQueueItemsByOrder(2601), 9);
+  assert.equal(await cleanCloudRepository.retryFailedSyncItemsByOrder(2601), 2);
+  assert.deepEqual(await cleanCloudRepository.markSyncQueueProcessing(51), { changes: 1 });
+  assert.deepEqual(await cleanCloudRepository.listSyncQueueItems(20), [{ id: 61, status: "pending" }]);
+  assert.deepEqual(await cleanCloudRepository.listWebhookEvents(20), [{ id: 71, status: "processed" }]);
+  assert.deepEqual(await cleanCloudRepository.findOrderByCleanCloudOrderId("CC-2601"), {
+    id: 2601,
+    public_id: "GL-2601"
+  });
+  assert.deepEqual(await cleanCloudRepository.getOrderBasketPickupSnapshot(2601), {
+    total_baskets: 2,
+    pickup_baskets: 1
+  });
+  assert.deepEqual(
+    await cleanCloudRepository.updateOrderFromWebhook({
+      orderId: 2601,
+      status: "pickup",
+      cleancloudStatus: "ready",
+      readyForPickup: true,
+      timestamp: "2026-04-29T08:03:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.insertWebhookEvent({
+      source: "cleancloud",
+      eventKey: "evt-1",
+      payloadJson: "{}",
+      receivedAt: "2026-04-29T08:04:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(
+    await cleanCloudRepository.updateWebhookEvent({
+      eventKey: "evt-1",
+      status: "processed",
+      message: "done",
+      processedAt: "2026-04-29T08:05:00.000Z"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(cleanCloudDb.calls[0].params, [2601, "cleancloud.status", "{\"status\":\"ready\"}"]);
+  assert.deepEqual(cleanCloudDb.calls[3].params, [
+    "+62 812",
+    4.5,
+    "2026-04-29T08:00:00.000Z",
+    2601
+  ]);
+  assert.deepEqual(cleanCloudDb.calls[8].params, [2601, 10]);
+  assert.deepEqual(cleanCloudDb.calls[9].params, [5]);
+  assert.deepEqual(cleanCloudDb.calls[17].params, ["pickup", "ready", 1, "2026-04-29T08:03:00.000Z", 2601]);
+  assert.match(cleanCloudDb.calls[3].sql, /customer_phone = \$1, order_weight = \$2, updated_at = \$3/);
+  assert.match(cleanCloudDb.calls[12].sql, /status = 'processing' WHERE id = \$1/);
+  assert.match(cleanCloudDb.calls[16].sql, /SUM\(CASE WHEN station = 'pickup'/);
 
   const systemDb = createFakeQueryable([
     { rows: [{ ok: 1 }], rowCount: 1 },
