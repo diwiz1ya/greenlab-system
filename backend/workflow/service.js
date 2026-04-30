@@ -1165,7 +1165,7 @@ function createWorkflowService(options) {
     await workflowRepository.releaseHoldOrderToWashing({ orderId, timestamp });
     await insertScanEvent(orderId, null, "overview", actor, "ok", "HOLD снят менеджером. Заказ возвращён на стирку.", timestamp);
 
-    queueSync(orderId, "cleancloud.status", {
+    await queueSync(orderId, "cleancloud.status", {
       orderId: order.cleancloud_order_id,
       status: "В работе"
     });
@@ -1358,7 +1358,7 @@ function createWorkflowService(options) {
         if (orderBaskets.length > 0) {
           await insertScanEvent(orderId, null, "pickup", actor, "ok", `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`, timestamp);
         }
-        queueSync(orderId, "cleancloud.status", {
+        await queueSync(orderId, "cleancloud.status", {
           orderId: order.cleancloud_order_id,
           status: "Завершён",
           allowCompleted: true

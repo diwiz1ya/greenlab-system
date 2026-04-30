@@ -121,16 +121,16 @@ function createCleanCloudService(options) {
     return Number(weight.toFixed(2));
   }
 
-  function queueSync(orderId, action, payload) {
+  async function queueSync(orderId, action, payload) {
     const createdAt = nowIso();
     const payloadJson = JSON.stringify(payload);
-    const duplicate = cleanCloudRepository.findPendingSyncDuplicate(orderId, action, payloadJson);
+    const duplicate = await cleanCloudRepository.findPendingSyncDuplicate(orderId, action, payloadJson);
 
     if (duplicate) {
       return { ok: true, queued: false, reason: "duplicate" };
     }
 
-    cleanCloudRepository.insertSyncQueueItem({ orderId, action, payloadJson, createdAt });
+    await cleanCloudRepository.insertSyncQueueItem({ orderId, action, payloadJson, createdAt });
     return { ok: true, queued: true };
   }
 
@@ -199,7 +199,7 @@ function createCleanCloudService(options) {
   }
 
   async function enrichOrderContactFromCleanCloud(orderId, actor) {
-    const order = cleanCloudRepository.findOrderContactById(orderId);
+    const order = await cleanCloudRepository.findOrderContactById(orderId);
     if (!order) {
       return { error: "Order not found", status: 404 };
     }
@@ -269,7 +269,7 @@ function createCleanCloudService(options) {
 
     const timestamp = nowIso();
     if (Object.keys(updates).length > 0) {
-      cleanCloudRepository.updateOrderContact(orderId, updates, timestamp);
+      await cleanCloudRepository.updateOrderContact(orderId, updates, timestamp);
     }
 
     const updateSummary = updatedParts.length
@@ -277,7 +277,7 @@ function createCleanCloudService(options) {
       : "CleanCloud responded, but no new data (weight/phone/email) was found.";
 
     if (updatedParts.length > 0) {
-      cleanCloudRepository.insertOverviewScanEvent({
+      await cleanCloudRepository.insertOverviewScanEvent({
         orderId,
         actor,
         message: updateSummary,
@@ -292,8 +292,8 @@ function createCleanCloudService(options) {
     };
   }
 
-  function markSyncQueueProcessed(id, note = null) {
-    cleanCloudRepository.markSyncQueueProcessed({ id, processedAt: nowIso(), note });
+  async function markSyncQueueProcessed(id, note = null) {
+    await cleanCloudRepository.markSyncQueueProcessed({ id, processedAt: nowIso(), note });
   }
 
   function normalizeSyncQueueError(errorText) {
@@ -323,13 +323,13 @@ function createCleanCloudService(options) {
     return text;
   }
 
-  function markSyncQueueRetry(id, attempts, errorText) {
+  async function markSyncQueueRetry(id, attempts, errorText) {
     const nextAttempts = attempts + 1;
     const shouldFail = nextAttempts >= syncRetryLimit;
     const status = shouldFail ? "failed" : "pending";
     const processedAt = shouldFail ? nowIso() : null;
     const errorMessage = normalizeSyncQueueError(errorText);
-    cleanCloudRepository.markSyncQueueRetry({
+    await cleanCloudRepository.markSyncQueueRetry({
       id,
       status,
       attempts: nextAttempts,
@@ -338,17 +338,17 @@ function createCleanCloudService(options) {
     });
   }
 
-  function keepSyncQueuePending(id, errorText) {
+  async function keepSyncQueuePending(id, errorText) {
     const errorMessage = normalizeSyncQueueError(errorText);
-    cleanCloudRepository.keepSyncQueuePending({ id, errorMessage });
+    await cleanCloudRepository.keepSyncQueuePending({ id, errorMessage });
   }
 
-  function listPendingSyncItems(limit = 20, orderId = null) {
+  async function listPendingSyncItems(limit = 20, orderId = null) {
     return cleanCloudRepository.listPendingSyncItems({ limit, orderId });
   }
 
-  function retryFailedSyncByOrder(orderId) {
-    const totalRows = cleanCloudRepository.countSyncQueueItemsByOrder(orderId);
+  async function retryFailedSyncByOrder(orderId) {
+    const totalRows = await cleanCloudRepository.countSyncQueueItemsByOrder(orderId);
 
     if (!totalRows) {
       return {
@@ -357,7 +357,7 @@ function createCleanCloudService(options) {
       };
     }
 
-    const failedRows = cleanCloudRepository.retryFailedSyncItemsByOrder(orderId);
+    const failedRows = await cleanCloudRepository.retryFailedSyncItemsByOrder(orderId);
 
     return {
       ok: true,
@@ -377,20 +377,20 @@ function createCleanCloudService(options) {
     const scopedOrderId = Number.isFinite(orderIdFilter) && orderIdFilter > 0
       ? orderIdFilter
       : null;
-    const pending = listPendingSyncItems(20, scopedOrderId);
+    const pending = await listPendingSyncItems(20, scopedOrderId);
 
     try {
       for (const item of pending) {
-        cleanCloudRepository.markSyncQueueProcessing(item.id);
+        await cleanCloudRepository.markSyncQueueProcessing(item.id);
 
         if (item.action !== "cleancloud.status") {
-          markSyncQueueProcessed(item.id, "Skipped unsupported action");
+          await markSyncQueueProcessed(item.id, "Skipped unsupported action");
           continue;
         }
 
         const payload = safeJsonParse(item.payload);
         if (!payload) {
-          markSyncQueueRetry(item.id, item.attempts, "Invalid payload JSON");
+          await markSyncQueueRetry(item.id, item.attempts, "Invalid payload JSON");
           continue;
         }
 
@@ -398,29 +398,29 @@ function createCleanCloudService(options) {
           allowCompleted: payload.allowCompleted === true
         });
         if (!statusCode) {
-          markSyncQueueRetry(item.id, item.attempts, "Unknown status mapping");
+          await markSyncQueueRetry(item.id, item.attempts, "Unknown status mapping");
           continue;
         }
 
         if (!apiToken) {
-          keepSyncQueuePending(item.id, "Blocked: CLEAN_CLOUD_API_TOKEN is not set");
+          await keepSyncQueuePending(item.id, "Blocked: CLEAN_CLOUD_API_TOKEN is not set");
           break;
         }
 
         if (!isLikelyNumericOrderId(payload.orderId)) {
-          markSyncQueueProcessed(item.id, "Skipped: cleancloud order id is not numeric");
+          await markSyncQueueProcessed(item.id, "Skipped: cleancloud order id is not numeric");
           continue;
         }
 
         try {
           const result = await callCleanCloudUpdateOrder(payload.orderId, statusCode);
           if (result.ok) {
-            markSyncQueueProcessed(item.id, null);
+            await markSyncQueueProcessed(item.id, null);
           } else {
-            markSyncQueueRetry(item.id, item.attempts, result.error);
+            await markSyncQueueRetry(item.id, item.attempts, result.error);
           }
         } catch (error) {
-          markSyncQueueRetry(item.id, item.attempts, error instanceof Error ? error.message : String(error));
+          await markSyncQueueRetry(item.id, item.attempts, error instanceof Error ? error.message : String(error));
         }
       }
     } finally {
@@ -428,14 +428,15 @@ function createCleanCloudService(options) {
     }
   }
 
-  function listSyncQueueItems(limit = 25) {
-    return cleanCloudRepository.listSyncQueueItems(limit).map((item) => ({
+  async function listSyncQueueItems(limit = 25) {
+    const items = await cleanCloudRepository.listSyncQueueItems(limit);
+    return items.map((item) => ({
       ...item,
       last_error: item.last_error ? normalizeSyncQueueError(item.last_error) : null
     }));
   }
 
-  function listWebhookEvents(limit = 25) {
+  async function listWebhookEvents(limit = 25) {
     return cleanCloudRepository.listWebhookEvents(limit);
   }
 
@@ -456,7 +457,7 @@ function createCleanCloudService(options) {
     return crypto.createHash("sha256").update(JSON.stringify(payload || {})).digest("hex");
   }
 
-  function applyCleanCloudWebhookPayload(payload) {
+  async function applyCleanCloudWebhookPayload(payload) {
     const cleanCloudOrderId = String(payload?.orderID || payload?.orderId || "").trim();
     const localStatus = mapCleanCloudStatusToLocalOrderState(payload?.status);
 
@@ -468,14 +469,14 @@ function createCleanCloudService(options) {
       return { status: "ignored", message: "Unsupported or missing webhook status." };
     }
 
-    const order = cleanCloudRepository.findOrderByCleanCloudOrderId(cleanCloudOrderId);
+    const order = await cleanCloudRepository.findOrderByCleanCloudOrderId(cleanCloudOrderId);
 
     if (!order) {
       return { status: "ignored", message: `No local order mapped to cleancloud_order_id=${cleanCloudOrderId}.` };
     }
 
     if (localStatus.status === "pickup") {
-      const basketSnapshot = cleanCloudRepository.getOrderBasketPickupSnapshot(order.id);
+      const basketSnapshot = await cleanCloudRepository.getOrderBasketPickupSnapshot(order.id);
       const totalBaskets = Number(basketSnapshot?.total_baskets || 0);
       const pickupBaskets = Number(basketSnapshot?.pickup_baskets || 0);
 
@@ -494,7 +495,7 @@ function createCleanCloudService(options) {
     }
 
     const timestamp = nowIso();
-    cleanCloudRepository.updateOrderFromWebhook({
+    await cleanCloudRepository.updateOrderFromWebhook({
       orderId: order.id,
       status: localStatus.status,
       cleancloudStatus: localStatus.cleancloudStatus,
@@ -502,7 +503,7 @@ function createCleanCloudService(options) {
       timestamp
     });
 
-    cleanCloudRepository.insertOverviewScanEvent({
+    await cleanCloudRepository.insertOverviewScanEvent({
       orderId: order.id,
       actor: "cleancloud_webhook",
       message: `Webhook updated order ${order.public_id}: ${localStatus.cleancloudStatus}.`,
@@ -515,12 +516,12 @@ function createCleanCloudService(options) {
     };
   }
 
-  function handleCleanCloudWebhook(payload, source) {
+  async function handleCleanCloudWebhook(payload, source) {
     const eventKey = getWebhookEventKey(payload);
     const receivedAt = nowIso();
 
     try {
-      cleanCloudRepository.insertWebhookEvent({
+      await cleanCloudRepository.insertWebhookEvent({
         source,
         eventKey,
         payloadJson: JSON.stringify(payload || {}),
@@ -528,7 +529,7 @@ function createCleanCloudService(options) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("UNIQUE constraint failed")) {
+      if (message.includes("UNIQUE constraint failed") || message.includes("duplicate key value")) {
         return {
           ok: true,
           duplicate: true,
@@ -539,8 +540,8 @@ function createCleanCloudService(options) {
       throw error;
     }
 
-    const result = applyCleanCloudWebhookPayload(payload || {});
-    cleanCloudRepository.updateWebhookEvent({
+    const result = await applyCleanCloudWebhookPayload(payload || {});
+    await cleanCloudRepository.updateWebhookEvent({
       eventKey,
       status: result.status,
       message: result.message,

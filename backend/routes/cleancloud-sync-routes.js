@@ -1,7 +1,7 @@
 const { parsePositiveInt, parseRequiredString } = require("../http/validation");
 const { getClientIp } = require("../http/request-meta");
 
-function handleCleanCloudSyncRoutes(req, res, url, ctx) {
+async function handleCleanCloudSyncRoutes(req, res, url, ctx) {
   const {
     readJson,
     json,
@@ -38,9 +38,9 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
     }
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const source = getClientIp(req, { trustProxy });
-        const result = handleCleanCloudWebhook(body, String(source));
+        const result = await handleCleanCloudWebhook(body, String(source));
         json(res, 200, result);
       })
       .catch((error) => json(res, 400, { error: error.message }));
@@ -53,8 +53,8 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
     if (!requireManager(session, res)) return true;
 
     json(res, 200, {
-      items: listSyncQueueItems(25),
-      summary: getSyncQueueSummary()
+      items: await listSyncQueueItems(25),
+      summary: await getSyncQueueSummary()
     });
     return true;
   }
@@ -80,7 +80,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
             message: scopedOrderId
               ? `Sync started for order #${scopedOrderId}.`
               : "Sync queue started.",
-            summary: getSyncQueueSummary()
+            summary: await getSyncQueueSummary()
           });
         } catch (error) {
           json(res, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -106,7 +106,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
             return;
           }
 
-          const retryResult = retryFailedSyncByOrder(orderId);
+          const retryResult = await retryFailedSyncByOrder(orderId);
           if (retryResult.error) {
             json(res, retryResult.status, { error: retryResult.error });
             return;
@@ -121,7 +121,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
             orderId,
             retried: retryResult.retried,
             message: retryResult.message,
-            summary: getSyncQueueSummary()
+            summary: await getSyncQueueSummary()
           });
         } catch (error) {
           json(res, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -142,7 +142,7 @@ function handleCleanCloudSyncRoutes(req, res, url, ctx) {
     const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(limitRaw, 100)) : 25;
     json(res, 200, {
       total: limit,
-      rows: listWebhookEvents(limit)
+      rows: await listWebhookEvents(limit)
     });
     return true;
   }

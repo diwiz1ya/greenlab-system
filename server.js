@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 const { openDatabase } = require("./backend/db");
-const { runImmediateTransaction } = require("./backend/db/transaction");
+const { runImmediateAsyncTransaction } = require("./backend/db/transaction");
 const { createRepositories } = require("./backend/db/repositories");
 const Busboy = require("busboy");
 const { createSessionStore } = require("./backend/auth/session-store");
@@ -256,8 +256,6 @@ const {
   listSecurityEvents
 } = createSecurityEventService(securityEventRepository, { nowIso });
 
-seedDemoData({ force: DEMO_RESET_ON_BOOT });
-
 function getStationLabel(station) {
   if (station === HOLD_STATION) return HOLD_STATION_LABEL;
   if (station === CUSTOMER_APPROVAL_STATION) return CUSTOMER_APPROVAL_STATION_LABEL;
@@ -268,12 +266,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function normalizeLegacyData() {
-  demoSeedRepository.normalizeLegacyData();
+async function normalizeLegacyData() {
+  await demoSeedRepository.normalizeLegacyData();
 }
 
-function ensureCurrentUsers() {
-  const rows = demoSeedRepository.listUsersAllowedStations();
+async function ensureCurrentUsers() {
+  const rows = await demoSeedRepository.listUsersAllowedStations();
 
   for (const row of rows) {
     let allowedStations = [];
@@ -313,12 +311,12 @@ function ensureCurrentUsers() {
     }
 
     if (changed) {
-      demoSeedRepository.updateAllowedStations(row.id, JSON.stringify(allowedStations));
+      await demoSeedRepository.updateAllowedStations(row.id, JSON.stringify(allowedStations));
     }
   }
 
-  if (!demoSeedRepository.userExists("qc")) {
-    demoSeedRepository.insertUser({
+  if (!(await demoSeedRepository.userExists("qc"))) {
+    await demoSeedRepository.insertUser({
       username: "qc",
       password: REDACTED_PASSWORD_VALUE,
       passwordHash: hashPassword("demo123"),
@@ -328,8 +326,8 @@ function ensureCurrentUsers() {
     });
   }
 
-  if (!demoSeedRepository.userExists("rework")) {
-    demoSeedRepository.insertUser({
+  if (!(await demoSeedRepository.userExists("rework"))) {
+    await demoSeedRepository.insertUser({
       username: "rework",
       password: REDACTED_PASSWORD_VALUE,
       passwordHash: hashPassword("demo123"),
@@ -340,7 +338,7 @@ function ensureCurrentUsers() {
   }
 }
 
-function ensureDefaultMachines() {
+async function ensureDefaultMachines() {
   const timestamp = nowIso();
   const defaultMachines = [];
   for (let index = 1; index <= 6; index += 1) {
@@ -360,38 +358,38 @@ function ensureDefaultMachines() {
   }
 
   for (const machine of defaultMachines) {
-    demoSeedRepository.upsertMachine({ ...machine, timestamp });
+    await demoSeedRepository.upsertMachine({ ...machine, timestamp });
   }
 }
 
-function ensureDefaultBasketCatalog() {
+async function ensureDefaultBasketCatalog() {
   const timestamp = nowIso();
   const catalogEntries = createDefaultBasketCatalogEntries(50);
   for (const entry of catalogEntries) {
-    demoSeedRepository.upsertBasketCatalogEntry({ ...entry, timestamp });
+    await demoSeedRepository.upsertBasketCatalogEntry({ ...entry, timestamp });
   }
 }
 
-function ensureDefaultPickupLocations() {
+async function ensureDefaultPickupLocations() {
   const timestamp = nowIso();
   const locationEntries = createDefaultPickupLocationEntries(40);
   for (const entry of locationEntries) {
-    demoSeedRepository.upsertPickupLocation({ ...entry, timestamp });
+    await demoSeedRepository.upsertPickupLocation({ ...entry, timestamp });
   }
 }
 
-function seedDemoData(options = {}) {
+async function seedDemoData(options = {}) {
   const force = Boolean(options.force);
 
   if (!force) {
-    const userCount = demoSeedRepository.countUsers();
+    const userCount = await demoSeedRepository.countUsers();
     if (userCount > 0) {
-      normalizeLegacyData();
-      ensureCurrentUsers();
-      ensureDefaultMachines();
-      ensureDefaultBasketCatalog();
-      ensureDefaultPickupLocations();
-      ensurePasswordHashes(userRepository);
+      await normalizeLegacyData();
+      await ensureCurrentUsers();
+      await ensureDefaultMachines();
+      await ensureDefaultBasketCatalog();
+      await ensureDefaultPickupLocations();
+      await ensurePasswordHashes(userRepository);
       return false;
     }
   }
@@ -407,9 +405,9 @@ function seedDemoData(options = {}) {
     ["manager", "demo123", "Branch manager", "manager", ["overview", "sorting", "washing", "drying", "qc", "rework", "ironing", "pickup"]]
   ];
 
-  runImmediateTransaction(db, () => {
+  await runImmediateAsyncTransaction(db, async () => {
     if (force) {
-      demoSeedRepository.clearDemoData();
+      await demoSeedRepository.clearDemoData();
 
       for (const entry of fs.readdirSync(BASKET_UPLOADS_DIR)) {
         const absolutePath = path.join(BASKET_UPLOADS_DIR, entry);
@@ -424,7 +422,7 @@ function seedDemoData(options = {}) {
     }
 
     for (const [username, password, displayName, role, allowedStations] of users) {
-      demoSeedRepository.insertUser({
+      await demoSeedRepository.insertUser({
         username,
         password: REDACTED_PASSWORD_VALUE,
         passwordHash: hashPassword(password),
@@ -434,12 +432,12 @@ function seedDemoData(options = {}) {
       });
     }
 
-    ensureDefaultMachines();
-    ensureDefaultBasketCatalog();
-    ensureDefaultPickupLocations();
+    await ensureDefaultMachines();
+    await ensureDefaultBasketCatalog();
+    await ensureDefaultPickupLocations();
 
     const timestamp = nowIso();
-    demoSeedRepository.insertOrder({
+    await demoSeedRepository.insertOrder({
       publicId: "GL-2601",
       cleanCloudOrderId: "CC-2601",
       customerName: "Dian Saputra",
@@ -453,7 +451,7 @@ function seedDemoData(options = {}) {
       readyForPickup: 0,
       timestamp
     });
-    demoSeedRepository.insertOrder({
+    await demoSeedRepository.insertOrder({
       publicId: "GL-2602",
       cleanCloudOrderId: "CC-2602",
       customerName: "Lina Mahendra",
@@ -469,7 +467,7 @@ function seedDemoData(options = {}) {
     });
   });
 
-  ensurePasswordHashes(userRepository);
+  await ensurePasswordHashes(userRepository);
   return true;
 }
 
@@ -707,9 +705,9 @@ async function runIdempotentOperation(req, options = {}) {
   const nowStamp = now.toISOString();
   const expiresAt = addHoursIso(now, IDEMPOTENCY_TTL_HOURS);
 
-  idempotencyRepository.purgeExpired(nowStamp);
+  await idempotencyRepository.purgeExpired(nowStamp);
 
-  const cached = idempotencyRepository.findCachedRecord({
+  const cached = await idempotencyRepository.findCachedRecord({
     key,
     routeKey,
     actor,
@@ -730,7 +728,7 @@ async function runIdempotentOperation(req, options = {}) {
     : (result?.error ? 400 : 200);
   const responseJson = JSON.stringify(result || {});
 
-  idempotencyRepository.saveRecord({
+  await idempotencyRepository.saveRecord({
     key,
     routeKey,
     actor,
@@ -848,8 +846,8 @@ if (SYNC_POLL_INTERVAL_MS > 0) {
   }, SYNC_POLL_INTERVAL_MS).unref();
 }
 
-function getSyncQueueSummary() {
-  const rows = systemRepository.listSyncQueueStatusCounts();
+async function getSyncQueueSummary() {
+  const rows = await systemRepository.listSyncQueueStatusCounts();
 
   return {
     pending: rows.find((row) => row.status === "pending")?.count || 0,
@@ -978,65 +976,76 @@ async function routeApi(req, res, url) {
   return false;
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-  if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/api/healthz")) {
-    let dbOk = true;
-    let dbError = null;
+    if (req.method === "GET" && (url.pathname === "/healthz" || url.pathname === "/api/healthz")) {
+      let dbOk = true;
+      let dbError = null;
 
-    try {
-      systemRepository.checkConnection();
-    } catch (error) {
-      dbOk = false;
-      dbError = error instanceof Error ? error.message : String(error);
+      try {
+        await systemRepository.checkConnection();
+      } catch (error) {
+        dbOk = false;
+        dbError = error instanceof Error ? error.message : String(error);
+      }
+
+      const payload = {
+        ok: dbOk,
+        service: "green-lab-demo-mvp",
+        time: nowIso(),
+        uptimeSec: Math.floor(process.uptime()),
+        db: {
+          client: DB_CLIENT,
+          ok: dbOk,
+          error: dbError
+        },
+        syncQueue: await getSyncQueueSummary()
+      };
+
+      json(res, dbOk ? 200 : 503, payload);
+      return;
     }
 
-    const payload = {
-      ok: dbOk,
-      service: "green-lab-demo-mvp",
-      time: nowIso(),
-      uptimeSec: Math.floor(process.uptime()),
-      db: {
-        client: DB_CLIENT,
-        ok: dbOk,
-        error: dbError
-      },
-      syncQueue: getSyncQueueSummary()
-    };
+    if (url.pathname.startsWith("/api/")) {
+      const handled = await routeApi(req, res, url);
+      if (!handled) {
+        json(res, 404, { error: "Not found" });
+      }
+      return;
+    }
 
-    json(res, dbOk ? 200 : 503, payload);
-    return;
+    let filePath = resolvePublicFilePath(url.pathname);
+    if (!filePath) {
+      res.writeHead(403);
+      res.end("Access denied");
+      return;
+    }
+
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      filePath = path.join(PUBLIC_DIR, "index.html");
+    }
+
+    serveFile(res, filePath);
+  } catch (error) {
+    if (!res.headersSent) {
+      json(res, 500, { error: error instanceof Error ? error.message : String(error) });
+    } else {
+      res.end();
+    }
   }
-
-  if (url.pathname.startsWith("/api/")) {
-    routeApi(req, res, url)
-      .then((handled) => {
-        if (!handled) {
-          json(res, 404, { error: "Not found" });
-        }
-      })
-      .catch((error) => {
-        json(res, 500, { error: error instanceof Error ? error.message : String(error) });
-      });
-    return;
-  }
-
-  let filePath = resolvePublicFilePath(url.pathname);
-  if (!filePath) {
-    res.writeHead(403);
-    res.end("Access denied");
-    return;
-  }
-
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(PUBLIC_DIR, "index.html");
-  }
-
-  serveFile(res, filePath);
 });
 
-server.listen(PORT, () => {
-console.log(`Green Lab demo MVP is running at http://127.0.0.1:${PORT}`);
+async function startServer() {
+  await seedDemoData({ force: DEMO_RESET_ON_BOOT });
+  server.listen(PORT, () => {
+    console.log(`Green Lab demo MVP is running at http://127.0.0.1:${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error("Failed to start Green Lab server:", error);
+  process.exit(1);
 });
 

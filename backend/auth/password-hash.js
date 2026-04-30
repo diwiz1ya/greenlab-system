@@ -30,8 +30,8 @@ function verifyHashedPassword(password, storedHash) {
   return crypto.timingSafeEqual(actual, expected);
 }
 
-function ensurePasswordHashes(userRepository) {
-  const rows = userRepository.listPasswordRows();
+async function ensurePasswordHashes(userRepository) {
+  const rows = await userRepository.listPasswordRows();
   for (const row of rows) {
     const storedHash = String(row.password_hash || "").trim();
     const hasValidHash = storedHash.startsWith("scrypt$");
@@ -41,12 +41,12 @@ function ensurePasswordHashes(userRepository) {
       if (!plain || plain === REDACTED_PASSWORD_VALUE) {
         continue;
       }
-      userRepository.updatePasswordHashAndRedact(row.id, REDACTED_PASSWORD_VALUE, hashPassword(plain));
+      await userRepository.updatePasswordHashAndRedact(row.id, REDACTED_PASSWORD_VALUE, hashPassword(plain));
       continue;
     }
 
     if (plain !== REDACTED_PASSWORD_VALUE) {
-      userRepository.redactPassword(row.id, REDACTED_PASSWORD_VALUE);
+      await userRepository.redactPassword(row.id, REDACTED_PASSWORD_VALUE);
     }
   }
 }
