@@ -23,6 +23,7 @@ const { createPostgresSecurityEventRepository } = require("./postgres-security-e
 const { createPostgresSortingRepository } = require("./postgres-sorting-repository");
 const { createPostgresSystemRepository } = require("./postgres-system-repository");
 const { createPostgresUserRepository } = require("./postgres-user-repository");
+const { createPostgresWorkflowRepository } = require("./postgres-workflow-repository");
 
 const POSTGRES_READY_REPOSITORIES = [
   "cleanCloudRepository",
@@ -36,12 +37,11 @@ const POSTGRES_READY_REPOSITORIES = [
   "securityEventRepository",
   "sortingRepository",
   "systemRepository",
-  "userRepository"
-];
-
-const POSTGRES_BLOCKED_REPOSITORIES = [
+  "userRepository",
   "workflowRepository"
 ];
+
+const POSTGRES_BLOCKED_REPOSITORIES = [];
 
 function createSqliteRepositories(db) {
   return {
@@ -62,7 +62,7 @@ function createSqliteRepositories(db) {
 }
 
 function createPostgresRepositories(options = {}) {
-  if (!options.allowPartialPostgres) {
+  if (POSTGRES_BLOCKED_REPOSITORIES.length && !options.allowPartialPostgres) {
     throw new Error(
       `PostgreSQL repository factory is incomplete. Missing repositories: ${POSTGRES_BLOCKED_REPOSITORIES.join(", ")}.`
     );
@@ -80,7 +80,8 @@ function createPostgresRepositories(options = {}) {
     securityEventRepository: createPostgresSecurityEventRepository(options.db),
     sortingRepository: createPostgresSortingRepository(options.db),
     systemRepository: createPostgresSystemRepository(options.db),
-    userRepository: createPostgresUserRepository(options.db)
+    userRepository: createPostgresUserRepository(options.db),
+    workflowRepository: createPostgresWorkflowRepository(options.db)
   };
 }
 

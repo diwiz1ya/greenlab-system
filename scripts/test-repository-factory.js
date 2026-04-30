@@ -11,9 +11,7 @@ const fakeQueryable = {
   }
 };
 
-assert.deepEqual(POSTGRES_BLOCKED_REPOSITORIES, [
-  "workflowRepository"
-]);
+assert.deepEqual(POSTGRES_BLOCKED_REPOSITORIES, []);
 assert.deepEqual(POSTGRES_READY_REPOSITORIES, [
   "cleanCloudRepository",
   "coreRepository",
@@ -26,24 +24,19 @@ assert.deepEqual(POSTGRES_READY_REPOSITORIES, [
   "securityEventRepository",
   "sortingRepository",
   "systemRepository",
-  "userRepository"
+  "userRepository",
+  "workflowRepository"
 ]);
 
-assert.throws(
-  () => createRepositories({ client: "postgres", db: fakeQueryable }),
-  /Missing repositories: workflowRepository/
-);
-
-const partialPostgresRepositories = createRepositories({
+const postgresRepositories = createRepositories({
   client: "postgres",
-  db: fakeQueryable,
-  allowPartialPostgres: true
+  db: fakeQueryable
 });
 for (const name of POSTGRES_READY_REPOSITORIES) {
-  assert.equal(typeof partialPostgresRepositories[name], "object", `${name} should be created`);
+  assert.equal(typeof postgresRepositories[name], "object", `${name} should be created`);
 }
 for (const name of POSTGRES_BLOCKED_REPOSITORIES) {
-  assert.equal(partialPostgresRepositories[name], undefined, `${name} should remain blocked`);
+  assert.equal(postgresRepositories[name], undefined, `${name} should remain blocked`);
 }
 
 assert.throws(
