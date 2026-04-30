@@ -19,6 +19,7 @@ const { createPostgresOrderQueryRepository } = require("./postgres-order-query-r
 const { createPostgresPickupWorkbenchRepository } = require("./postgres-pickup-workbench-repository");
 const { createPostgresScanRepository } = require("./postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("./postgres-security-event-repository");
+const { createPostgresSortingRepository } = require("./postgres-sorting-repository");
 const { createPostgresSystemRepository } = require("./postgres-system-repository");
 const { createPostgresUserRepository } = require("./postgres-user-repository");
 
@@ -31,13 +32,13 @@ const POSTGRES_READY_REPOSITORIES = [
   "pickupWorkbenchRepository",
   "scanRepository",
   "securityEventRepository",
+  "sortingRepository",
   "systemRepository",
   "userRepository"
 ];
 
 const POSTGRES_BLOCKED_REPOSITORIES = [
   "reworkRepository",
-  "sortingRepository",
   "workflowRepository"
 ];
 
@@ -75,6 +76,7 @@ function createPostgresRepositories(options = {}) {
     pickupWorkbenchRepository: createPostgresPickupWorkbenchRepository(options.db),
     scanRepository: createPostgresScanRepository(options.db),
     securityEventRepository: createPostgresSecurityEventRepository(options.db),
+    sortingRepository: createPostgresSortingRepository(options.db),
     systemRepository: createPostgresSystemRepository(options.db),
     userRepository: createPostgresUserRepository(options.db)
   };

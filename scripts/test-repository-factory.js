@@ -13,7 +13,6 @@ const fakeQueryable = {
 
 assert.deepEqual(POSTGRES_BLOCKED_REPOSITORIES, [
   "reworkRepository",
-  "sortingRepository",
   "workflowRepository"
 ]);
 assert.deepEqual(POSTGRES_READY_REPOSITORIES, [
@@ -25,13 +24,14 @@ assert.deepEqual(POSTGRES_READY_REPOSITORIES, [
   "pickupWorkbenchRepository",
   "scanRepository",
   "securityEventRepository",
+  "sortingRepository",
   "systemRepository",
   "userRepository"
 ]);
 
 assert.throws(
   () => createRepositories({ client: "postgres", db: fakeQueryable }),
-  /Missing repositories: reworkRepository, sortingRepository, workflowRepository/
+  /Missing repositories: reworkRepository, workflowRepository/
 );
 
 const partialPostgresRepositories = createRepositories({

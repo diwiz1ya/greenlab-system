@@ -7,6 +7,7 @@ const { createPostgresOrderQueryRepository } = require("../backend/db/postgres-o
 const { createPostgresPickupWorkbenchRepository } = require("../backend/db/postgres-pickup-workbench-repository");
 const { createPostgresScanRepository } = require("../backend/db/postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("../backend/db/postgres-security-event-repository");
+const { createPostgresSortingRepository } = require("../backend/db/postgres-sorting-repository");
 const { createPostgresSystemRepository } = require("../backend/db/postgres-system-repository");
 const { createPostgresUserRepository } = require("../backend/db/postgres-user-repository");
 
@@ -226,6 +227,94 @@ function createFakeQueryable(results = []) {
   assert.match(cleanCloudDb.calls[3].sql, /customer_phone = \$1, order_weight = \$2, updated_at = \$3/);
   assert.match(cleanCloudDb.calls[12].sql, /status = 'processing' WHERE id = \$1/);
   assert.match(cleanCloudDb.calls[16].sql, /SUM\(CASE WHEN station = 'pickup'/);
+
+  const sortingDb = createFakeQueryable([
+    { rows: [{ qr_code: "QR:BIN-001" }], rowCount: 1 },
+    { rows: [{ qr_code: "QR:BIN-002" }], rowCount: 1 },
+    { rows: [{ qr_code: "QR:BIN-003" }], rowCount: 1 },
+    { rows: [{ qr_code: "QR:BIN-004" }], rowCount: 1 },
+    { rows: [{ qr_code: "QR:BIN-005" }], rowCount: 1 },
+    { rows: [{ id: 2601, public_id: "GL-2601" }], rowCount: 1 },
+    { rows: [{ count: "2" }], rowCount: 1 },
+    { rows: [{ id: 1 }, { id: 2 }], rowCount: 2 },
+    { rows: [{ id: 10, file_path: "a.jpg" }], rowCount: 1 },
+    { rows: [], rowCount: 2 },
+    { rows: [{ id: 101 }], rowCount: 1 },
+    { rows: [{ id: 201 }], rowCount: 1 },
+    { rows: [], rowCount: 2 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 }
+  ]);
+  const sortingRepository = createPostgresSortingRepository(sortingDb);
+  assert.deepEqual(await sortingRepository.listKnownCatalogQrs(), [{ qr_code: "QR:BIN-001" }]);
+  assert.deepEqual(await sortingRepository.listFreeCatalogQrs({ limit: 5 }), [{ qr_code: "QR:BIN-002" }]);
+  assert.deepEqual(await sortingRepository.listFreeCatalogQrs({ limit: 5, excludeOrderId: 2601 }), [
+    { qr_code: "QR:BIN-003" }
+  ]);
+  assert.deepEqual(await sortingRepository.findConflictingQrCode({ qrCode: "QR:BIN-004" }), {
+    qr_code: "QR:BIN-004"
+  });
+  assert.deepEqual(
+    await sortingRepository.findConflictingQrCode({ qrCode: "QR:BIN-005", excludeOrderId: 2601 }),
+    { qr_code: "QR:BIN-005" }
+  );
+  assert.deepEqual(await sortingRepository.findOrderById(2601), { id: 2601, public_id: "GL-2601" });
+  assert.equal(await sortingRepository.countBasketsByOrder(2601), 2);
+  assert.deepEqual(await sortingRepository.listBasketIdsByOrder(2601), [1, 2]);
+  assert.deepEqual(await sortingRepository.listBasketImagesByBasketIds([]), []);
+  assert.deepEqual(await sortingRepository.listBasketImagesByBasketIds([1, 2]), [
+    { id: 10, file_path: "a.jpg" }
+  ]);
+  assert.deepEqual(await sortingRepository.deleteBasketImagesByBasketIds([]), { changes: 0 });
+  assert.deepEqual(await sortingRepository.deleteBasketImagesByBasketIds([1, 2]), { changes: 2 });
+  assert.equal(
+    await sortingRepository.insertBasketImage({
+      basketId: 1,
+      role: "front",
+      sortOrder: 0,
+      note: "ok",
+      filePath: "a.jpg",
+      publicUrl: "/uploads/a.jpg",
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    101
+  );
+  assert.equal(
+    await sortingRepository.insertBasket({
+      orderId: 2601,
+      basketCode: "GL-2601-B1",
+      basketType: "mixed",
+      basketItemsJson: "[]",
+      qrCode: "QR:BIN-001",
+      labelPrintedAt: "2026-04-29T08:00:00.000Z",
+      labelPrintCount: 1,
+      timestamp: "2026-04-29T08:00:00.000Z"
+    }),
+    201
+  );
+  assert.deepEqual(await sortingRepository.deleteBasketsByOrder(2601), { changes: 2 });
+  assert.deepEqual(await sortingRepository.markOrderSorted({ orderId: 2601, timestamp: "t1" }), { changes: 1 });
+  assert.deepEqual(await sortingRepository.markOrderReturnedToSorting({ orderId: 2601, timestamp: "t2" }), {
+    changes: 1
+  });
+  assert.deepEqual(
+    await sortingRepository.insertSortingScanEvent({
+      orderId: 2601,
+      actor: "sorting",
+      message: "sorted",
+      timestamp: "t3"
+    }),
+    { changes: 1 }
+  );
+  assert.deepEqual(sortingDb.calls[1].params, [5]);
+  assert.deepEqual(sortingDb.calls[2].params, [2601, 5]);
+  assert.deepEqual(sortingDb.calls[4].params, ["QR:BIN-005", 2601]);
+  assert.deepEqual(sortingDb.calls[8].params, [1, 2]);
+  assert.deepEqual(sortingDb.calls[9].params, [1, 2]);
+  assert.match(sortingDb.calls[10].sql, /RETURNING id/);
+  assert.match(sortingDb.calls[11].sql, /RETURNING id/);
+  assert.match(sortingDb.calls[13].sql, /status = 'sorted'/);
 
   const systemDb = createFakeQueryable([
     { rows: [{ ok: 1 }], rowCount: 1 },
