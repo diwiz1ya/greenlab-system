@@ -2,7 +2,10 @@ const path = require("path");
 const { buildSingleItemCounts, getRemainingItemCounts, itemCountsToJson, normalizeItemCounts, parseBasketItemCounts } = require("./basket-core");
 const { normalizeBasketQrCode } = require("./basket-pool");
 const { normalizePickupLocationQrCode } = require("../pickup/locations");
-const { runImmediateTransaction } = require("../db/transaction");
+const {
+  runImmediateAsyncTransaction,
+  runImmediateTransaction
+} = require("../db/transaction");
 const { createReworkWorkflow } = require("./rework-service");
 const { createSortingWorkflow } = require("./sorting-service");
 
@@ -441,20 +444,23 @@ function createWorkflowService(options) {
     return normalized;
   }
 
-  function getMachineWithActiveLoad(station, machineCode) {
+  async function getMachineWithActiveLoad(station, machineCode) {
     return workflowRepository.getMachineWithActiveLoad({ station, machineCode });
   }
 
-  function listMachineWorkbench(station) {
+  async function listMachineWorkbench(station) {
     if (!machineStations.has(station)) {
       return { error: "Станция машинного цикла доступна только для стирки и сушки.", status: 400 };
     }
 
-    const machineRows = workflowRepository.listMachineWorkbenchRows(station);
+    const machineRows = await workflowRepository.listMachineWorkbenchRows(station);
 
-    const machines = machineRows.map((row) => {
+    const machines = await Promise.all(machineRows.map(async (row) => {
       const hasActiveLoad = Number(row.active_load_id || 0) > 0;
       const loadStatus = String(row.active_load_status || "");
+      const loadBaskets = hasActiveLoad
+        ? await workflowRepository.listLoadBaskets(row.active_load_id)
+        : [];
       const activeLoad = hasActiveLoad
         ? {
             id: Number(row.active_load_id),
@@ -465,7 +471,7 @@ function createWorkflowService(options) {
             completed_by: row.active_load_completed_by || null,
             baskets_count: Number(row.active_load_baskets_count || 0),
             unloaded_baskets_count: Number(row.active_load_unloaded_count || 0),
-            baskets: workflowRepository.listLoadBaskets(row.active_load_id).map((basket) => ({
+            baskets: loadBaskets.map((basket) => ({
               id: basket.id,
               basket_code: basket.basket_code,
               qr_code: basket.qr_code,
@@ -487,7 +493,7 @@ function createWorkflowService(options) {
         status: hasActiveLoad ? "busy" : "idle",
         active_load: activeLoad
       };
-    });
+    }));
 
     return {
       ok: true,
@@ -496,7 +502,7 @@ function createWorkflowService(options) {
     };
   }
 
-  function validateMachineLoadBasket(station, basketQrRaw) {
+  async function validateMachineLoadBasket(station, basketQrRaw) {
     if (!machineStations.has(station)) {
       return { error: "Machine cycle is available only for washing and drying stations.", status: 400 };
     }
@@ -512,7 +518,7 @@ function createWorkflowService(options) {
       };
     }
 
-    const basket = workflowRepository.findMachineFlowBasketByQr(basketQr);
+    const basket = await workflowRepository.findMachineFlowBasketByQr(basketQr);
     if (!basket) {
       return { error: `QR code ${basketQr} was not found.`, status: 404 };
     }
@@ -535,7 +541,7 @@ function createWorkflowService(options) {
       };
     }
 
-    const activeLoad = workflowRepository.findActiveMachineLoadByBasketId(basket.id);
+    const activeLoad = await workflowRepository.findActiveMachineLoadByBasketId(basket.id);
     if (activeLoad) {
       return {
         error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,
@@ -557,7 +563,7 @@ function createWorkflowService(options) {
     };
   }
 
-  function startMachineLoad(station, machineCodeRaw, basketQrsRaw, actor) {
+  async function startMachineLoad(station, machineCodeRaw, basketQrsRaw, actor) {
     if (!machineStations.has(station)) {
       return { error: "Машинный цикл можно запускать только на стирке или сушке.", status: 400 };
     }
@@ -581,7 +587,7 @@ function createWorkflowService(options) {
       return { error: "В одном цикле машины может быть только одна корзина.", status: 400 };
     }
 
-    const machine = getMachineWithActiveLoad(station, machineCode);
+    const machine = await getMachineWithActiveLoad(station, machineCode);
     if (!machine) {
       return { error: `Машина ${machineCode} не найдена для станции ${getStationLabel(station)}.`, status: 404 };
     }
@@ -597,7 +603,7 @@ function createWorkflowService(options) {
           status: 400
         };
       }
-      const basket = workflowRepository.findMachineFlowBasketByQr(qrCode);
+      const basket = await workflowRepository.findMachineFlowBasketByQr(qrCode);
       if (!basket) {
         return { error: `QR code ${qrCode} was not found.`, status: 404 };
       }
@@ -618,7 +624,7 @@ function createWorkflowService(options) {
           status: 409
         };
       }
-      const activeLoad = workflowRepository.findActiveMachineLoadByBasketId(basket.id);
+      const activeLoad = await workflowRepository.findActiveMachineLoadByBasketId(basket.id);
       if (activeLoad) {
         return {
           error: `Basket ${basket.basket_code} is already part of active cycle ${activeLoad.machine_code}.`,
@@ -632,8 +638,8 @@ function createWorkflowService(options) {
 
     let loadId = 0;
     try {
-      runImmediateTransaction(db, () => {
-        const loadInsert = workflowRepository.insertMachineLoad({
+      await runImmediateAsyncTransaction(db, async () => {
+        const loadInsert = await workflowRepository.insertMachineLoad({
           machineId: machine.id,
           station,
           actor,
@@ -642,13 +648,13 @@ function createWorkflowService(options) {
         loadId = Number(loadInsert.lastInsertRowid);
         const touchedOrderIds = new Set();
         for (const basket of baskets) {
-          workflowRepository.insertMachineLoadBasket({
+          await workflowRepository.insertMachineLoadBasket({
             loadId,
             basketId: basket.id,
             orderId: basket.order_id,
             timestamp
           });
-          workflowRepository.insertScanEvent({
+          await workflowRepository.insertScanEvent({
             orderId: basket.order_id,
             basketId: basket.id,
             station,
@@ -660,7 +666,7 @@ function createWorkflowService(options) {
         }
         for (const orderId of touchedOrderIds) {
           const firstBasketForOrder = baskets.find((basket) => Number(basket.order_id) === orderId);
-          refreshOrderStatusFromBaskets(
+          await refreshOrderStatusFromBaskets(
             orderId,
             firstBasketForOrder?.cleancloud_order_id || null,
             timestamp
@@ -692,8 +698,8 @@ function createWorkflowService(options) {
     };
   }
 
-  function unloadBasketFromMachineLoad(loadId, basketQrRaw, actor, options = {}) {
-    const load = workflowRepository.getMachineLoadById(loadId);
+  async function unloadBasketFromMachineLoad(loadId, basketQrRaw, actor, options = {}) {
+    const load = await workflowRepository.getMachineLoadById(loadId);
 
     if (!load) {
       return { error: "Machine cycle not found.", status: 404 };
@@ -719,7 +725,7 @@ function createWorkflowService(options) {
     }
     const nextStation = productionFlow[currentIndex + 1];
 
-    const pendingRows = workflowRepository.listPendingMachineLoadBaskets(loadId);
+    const pendingRows = await workflowRepository.listPendingMachineLoadBaskets(loadId);
 
     if (!pendingRows.length) {
       return { error: "No baskets left to unload in this machine cycle.", status: 409 };
@@ -749,7 +755,7 @@ function createWorkflowService(options) {
     const originalQr = String(row.qr_code || "");
     const rebindToAnotherBin = basketQr !== originalQr;
     if (rebindToAnotherBin) {
-      const knownBin = workflowRepository.findActiveBasketCatalogQr(basketQr);
+      const knownBin = await workflowRepository.findActiveBasketCatalogQr(basketQr);
       if (!knownBin) {
         return {
           error: `QR ${basketQr} is not present in BIN catalog BIN-001..BIN-050.`,
@@ -757,7 +763,7 @@ function createWorkflowService(options) {
         };
       }
 
-      const occupied = workflowRepository.findBasketQrOccupant({ qrCode: basketQr, excludeBasketId: row.basket_id });
+      const occupied = await workflowRepository.findBasketQrOccupant({ qrCode: basketQr, excludeBasketId: row.basket_id });
       if (occupied?.basket_code) {
         return {
           error: `QR ${basketQr} is already occupied by basket ${occupied.basket_code}.`,
@@ -770,17 +776,17 @@ function createWorkflowService(options) {
 
     let pendingCount = 0;
     try {
-      runImmediateTransaction(db, () => {
+      await runImmediateAsyncTransaction(db, async () => {
         if (rebindToAnotherBin) {
-          workflowRepository.rebindBasketQr({ basketId: row.basket_id, qrCode: basketQr, timestamp });
+          await workflowRepository.rebindBasketQr({ basketId: row.basket_id, qrCode: basketQr, timestamp });
         }
-        workflowRepository.unloadMachineLoadBasket({ loadBasketId: row.load_basket_id, actor, timestamp });
-        workflowRepository.moveBasketToStation({ basketId: row.basket_id, station: nextStation, timestamp });
+        await workflowRepository.unloadMachineLoadBasket({ loadBasketId: row.load_basket_id, actor, timestamp });
+        await workflowRepository.moveBasketToStation({ basketId: row.basket_id, station: nextStation, timestamp });
 
         const unloadMessage = rebindToAnotherBin
           ? `Basket unloaded from ${load.display_name} (${load.machine_code}), QR changed ${originalQr} -> ${basketQr}, station: ${getStationLabel(nextStation)}.`
           : `Basket unloaded from ${load.display_name} (${load.machine_code}) and moved to station ${getStationLabel(nextStation)}.`;
-        workflowRepository.insertScanEvent({
+        await workflowRepository.insertScanEvent({
           orderId: row.order_id,
           basketId: row.basket_id,
           station: load.station,
@@ -789,9 +795,9 @@ function createWorkflowService(options) {
           timestamp
         });
 
-        refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
-        workflowRepository.markMachineLoadCompletedIfEmpty({ loadId: load.id, timestamp });
-        pendingCount = workflowRepository.countPendingMachineLoadBaskets(load.id);
+        await refreshOrderStatusFromBaskets(row.order_id, row.cleancloud_order_id, timestamp);
+        await workflowRepository.markMachineLoadCompletedIfEmpty({ loadId: load.id, timestamp });
+        pendingCount = await workflowRepository.countPendingMachineLoadBaskets(load.id);
       });
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
@@ -823,8 +829,8 @@ function createWorkflowService(options) {
     };
   }
 
-  function cancelMachineLoad(loadId, actor, options = {}) {
-    const load = workflowRepository.getMachineLoadById(loadId);
+  async function cancelMachineLoad(loadId, actor, options = {}) {
+    const load = await workflowRepository.getMachineLoadById(loadId);
 
     if (!load) {
       return { error: "Машинный цикл не найден.", status: 404 };
@@ -836,14 +842,14 @@ function createWorkflowService(options) {
       return { error: `Цикл относится к станции ${getStationLabel(load.station)}, а не ${getStationLabel(options.expectedStation)}.`, status: 409 };
     }
 
-    const baskets = workflowRepository.listMachineLoadBasketOrderRefs(loadId);
+    const baskets = await workflowRepository.listMachineLoadBasketOrderRefs(loadId);
     const timestamp = nowIso();
 
     try {
-      runImmediateTransaction(db, () => {
-        workflowRepository.cancelMachineLoad({ loadId: load.id, actor, timestamp });
+      await runImmediateAsyncTransaction(db, async () => {
+        await workflowRepository.cancelMachineLoad({ loadId: load.id, actor, timestamp });
         for (const basket of baskets) {
-          workflowRepository.insertScanEvent({
+          await workflowRepository.insertScanEvent({
             orderId: basket.order_id,
             basketId: basket.id,
             station: load.station,
@@ -1278,10 +1284,10 @@ function createWorkflowService(options) {
 
     const timestamp = nowIso();
     try {
-      runImmediateTransaction(db, () => {
-        workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
+      await runImmediateAsyncTransaction(db, async () => {
+        await workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
         for (const placement of placements) {
-          workflowRepository.insertPickupOrderPlacement({
+          await workflowRepository.insertPickupOrderPlacement({
             orderId,
             slotIndex: placement.slotIndex,
             binQrCode: placement.binQrCode,
@@ -1290,11 +1296,11 @@ function createWorkflowService(options) {
             timestamp
           });
         }
-        workflowRepository.markOrderPlacedForPickup({ orderId, timestamp });
+        await workflowRepository.markOrderPlacedForPickup({ orderId, timestamp });
         const placementSummary = placements
           .map((placement) => `${placement.binQrCode} -> ${placement.locationQrCode}`)
           .join("; ");
-        insertScanEvent(orderId, null, "pickup", actor, "ok", `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
+        await insertScanEvent(orderId, null, "pickup", actor, "ok", `Заказ размещен на выдаче: ${placementSummary}.`, timestamp);
       });
     } catch (error) {
       return { error: error?.message || "Не удалось закрепить заказ за ячейкой выдачи.", status: 500 };
@@ -1339,18 +1345,18 @@ function createWorkflowService(options) {
     const orderBaskets = await workflowRepository.listOrderBasketsForArchive(orderId);
 
     try {
-      runImmediateTransaction(db, () => {
-        workflowRepository.markOrderPickedUp({ orderId, timestamp });
-        workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
-        insertScanEvent(orderId, null, "pickup", actor, "ok", "Выдача подтверждена менеджером.", timestamp);
+      await runImmediateAsyncTransaction(db, async () => {
+        await workflowRepository.markOrderPickedUp({ orderId, timestamp });
+        await workflowRepository.releaseActivePickupOrderPlacements({ orderId, actor, timestamp });
+        await insertScanEvent(orderId, null, "pickup", actor, "ok", "Выдача подтверждена менеджером.", timestamp);
 
         for (const basket of orderBaskets) {
           const archivedQrCode = `ARCHIVED:${basket.id}:${timestamp}`;
-          workflowRepository.archiveBasket({ basketId: basket.id, archivedQrCode, timestamp });
+          await workflowRepository.archiveBasket({ basketId: basket.id, archivedQrCode, timestamp });
         }
 
         if (orderBaskets.length > 0) {
-          insertScanEvent(orderId, null, "pickup", actor, "ok", `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`, timestamp);
+          await insertScanEvent(orderId, null, "pickup", actor, "ok", `QR корзин освобождены для повторного использования: ${orderBaskets.length}.`, timestamp);
         }
         queueSync(orderId, "cleancloud.status", {
           orderId: order.cleancloud_order_id,

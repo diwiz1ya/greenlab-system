@@ -1,5 +1,8 @@
 const assert = require("node:assert/strict");
-const { runAsyncTransaction } = require("../backend/db/transaction");
+const {
+  runAsyncTransaction,
+  runImmediateAsyncTransaction
+} = require("../backend/db/transaction");
 
 function createFakePool(options = {}) {
   const calls = [];
@@ -55,6 +58,36 @@ function createFakePool(options = {}) {
 
   await assert.rejects(() => runAsyncTransaction({}, async () => {}), /connect/);
   await assert.rejects(() => runAsyncTransaction(createFakePool(), null), /callback/);
+
+  const sqliteCalls = [];
+  const fakeSqlite = {
+    exec(sql) {
+      sqliteCalls.push(sql);
+    }
+  };
+  const sqliteResult = await runImmediateAsyncTransaction(fakeSqlite, async () => {
+    sqliteCalls.push("work");
+    return "sqlite-ok";
+  });
+  assert.equal(sqliteResult, "sqlite-ok");
+  assert.deepEqual(sqliteCalls, ["BEGIN IMMEDIATE;", "work", "COMMIT;"]);
+
+  const sqliteRollbackCalls = [];
+  await assert.rejects(
+    () => runImmediateAsyncTransaction(
+      {
+        exec(sql) {
+          sqliteRollbackCalls.push(sql);
+        }
+      },
+      async () => {
+        sqliteRollbackCalls.push("work");
+        throw new Error("sqlite work failed");
+      }
+    ),
+    /sqlite work failed/
+  );
+  assert.deepEqual(sqliteRollbackCalls, ["BEGIN IMMEDIATE;", "work", "ROLLBACK;"]);
 
   console.log("DB transaction tests: OK");
 })().catch((error) => {

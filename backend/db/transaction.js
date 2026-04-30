@@ -14,6 +14,22 @@ function runImmediateTransaction(db, work) {
   }
 }
 
+async function runImmediateAsyncTransaction(db, work) {
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    const result = await work();
+    db.exec("COMMIT;");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // ignore rollback failure
+    }
+    throw error;
+  }
+}
+
 async function runAsyncTransaction(pool, work) {
   if (!pool || typeof pool.connect !== "function") {
     throw new Error("PostgreSQL transaction pool must expose connect().");
@@ -46,5 +62,6 @@ async function runAsyncTransaction(pool, work) {
 
 module.exports = {
   runAsyncTransaction,
+  runImmediateAsyncTransaction,
   runImmediateTransaction
 };
