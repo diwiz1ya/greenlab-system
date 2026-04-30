@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { createPostgresCoreRepository } = require("../backend/db/postgres-core-repository");
 const { createPostgresDemoSeedRepository } = require("../backend/db/postgres-demo-seed-repository");
 const { createPostgresIdempotencyRepository } = require("../backend/db/postgres-idempotency-repository");
+const { createPostgresOrderQueryRepository } = require("../backend/db/postgres-order-query-repository");
 const { createPostgresPickupWorkbenchRepository } = require("../backend/db/postgres-pickup-workbench-repository");
 const { createPostgresScanRepository } = require("../backend/db/postgres-scan-repository");
 const { createPostgresSecurityEventRepository } = require("../backend/db/postgres-security-event-repository");
@@ -160,6 +161,70 @@ function createFakeQueryable(results = []) {
   assert.deepEqual(scanDb.calls[2].params, ["washing", 20]);
   assert.match(scanDb.calls[0].sql, /WHERE se\.order_id = \$1/);
   assert.match(scanDb.calls[2].sql, /WHERE se\.station = \$1/);
+
+  const orderQueryDb = createFakeQueryable([
+    { rows: [{ id: 2601, public_id: "GL-2601" }], rowCount: 1 },
+    { rows: [{ id: 1, basket_code: "B-1" }], rowCount: 1 },
+    { rows: [{ id: 11, basket_id: 1 }], rowCount: 1 },
+    { rows: [{ id: 21, station: "sorting" }], rowCount: 1 },
+    { rows: [{ slot_index: 1 }], rowCount: 1 },
+    { rows: [{ station: "washing", machine_code: "W01" }], rowCount: 1 },
+    { rows: [{ id: 31, source_basket_code: "B-1" }], rowCount: 1 },
+    { rows: [{ count: "2" }], rowCount: 1 },
+    { rows: [{ count: "3" }], rowCount: 1 },
+    { rows: [{ count: "4" }], rowCount: 1 },
+    { rows: [{ id: 2601, basket_count: 1 }], rowCount: 1 },
+    { rows: [{ order_id: 2601, slot_index: 1 }], rowCount: 1 },
+    { rows: [{ decisions_total: 2, approval_minutes_avg: 3.5 }], rowCount: 1 },
+    { rows: [{ total_rework_baskets: 1 }], rowCount: 1 },
+    { rows: [{ handoff_count: 1 }], rowCount: 1 },
+    { rows: [{ id: 2602, public_id: "GL-2602" }], rowCount: 1 },
+    { rows: [{ id: 2603, baskets_in_station: 2 }], rowCount: 1 },
+    { rows: [{ count: "5" }], rowCount: 1 },
+    { rows: [{ count: "6" }], rowCount: 1 },
+    { rows: [{ count: "7" }], rowCount: 1 }
+  ]);
+  const orderQueryRepository = createPostgresOrderQueryRepository(orderQueryDb);
+  assert.deepEqual(await orderQueryRepository.findOrderById(2601), { id: 2601, public_id: "GL-2601" });
+  assert.deepEqual(await orderQueryRepository.listBasketsByOrderId(2601), [{ id: 1, basket_code: "B-1" }]);
+  assert.deepEqual(await orderQueryRepository.listBasketImagesByBasketIds([]), []);
+  assert.deepEqual(await orderQueryRepository.listBasketImagesByBasketIds([1, 2]), [{ id: 11, basket_id: 1 }]);
+  assert.deepEqual(await orderQueryRepository.listRecentScansByOrderId(2601), [{ id: 21, station: "sorting" }]);
+  assert.deepEqual(await orderQueryRepository.listPickupPlacementsByOrderId(2601), [{ slot_index: 1 }]);
+  assert.deepEqual(await orderQueryRepository.listMachineUsageByOrderId(2601), [
+    { station: "washing", machine_code: "W01" }
+  ]);
+  assert.deepEqual(await orderQueryRepository.listReworkRequestsByOrderId(2601), [
+    { id: 31, source_basket_code: "B-1" }
+  ]);
+  assert.equal(await orderQueryRepository.countSortingOrders(), 2);
+  assert.equal(await orderQueryRepository.countOrdersByBasketStation("qc"), 3);
+  assert.equal(await orderQueryRepository.countReadyOrders(), 4);
+  assert.deepEqual(await orderQueryRepository.listOverviewOrders(), [{ id: 2601, basket_count: 1 }]);
+  assert.deepEqual(await orderQueryRepository.listActivePickupPlacements(), [{ order_id: 2601, slot_index: 1 }]);
+  assert.deepEqual(await orderQueryRepository.getManagerKpiCore(), {
+    decisions_total: 2,
+    approval_minutes_avg: 3.5
+  });
+  assert.deepEqual(await orderQueryRepository.getManagerKpiRework(), [{ total_rework_baskets: 1 }][0]);
+  assert.deepEqual(await orderQueryRepository.getManagerKpiPickup(), { handoff_count: 1 });
+  assert.deepEqual(await orderQueryRepository.listSortingStationOrders(), [{ id: 2602, public_id: "GL-2602" }]);
+  assert.deepEqual(await orderQueryRepository.listActiveStationOrders("drying"), [
+    { id: 2603, baskets_in_station: 2 }
+  ]);
+  assert.equal(await orderQueryRepository.countQcBaskets(), 5);
+  assert.equal(await orderQueryRepository.countQcOrdersFromBaskets(), 6);
+  assert.equal(await orderQueryRepository.countQcStatusOrders(), 7);
+  assert.deepEqual(orderQueryDb.calls[0].params, [2601]);
+  assert.deepEqual(orderQueryDb.calls[2].params, [1, 2]);
+  assert.deepEqual(orderQueryDb.calls[8].params, ["qc", "qc"]);
+  assert.deepEqual(orderQueryDb.calls[16].params, ["drying", "drying", "drying", "drying"]);
+  assert.match(orderQueryDb.calls[2].sql, /WHERE basket_id IN \(\$1, \$2\)/);
+  assert.match(orderQueryDb.calls[3].sql, /ORDER BY created_at DESC/);
+  assert.match(orderQueryDb.calls[5].sql, /last_used_at DESC/);
+  assert.match(orderQueryDb.calls[10].sql, /pending_customer_approval_count/);
+  assert.match(orderQueryDb.calls[12].sql, /EXTRACT\(EPOCH FROM/);
+  assert.match(orderQueryDb.calls[14].sql, /Выдача подтверждена%/);
 
   const seedDb = createFakeQueryable([
     { rows: [], rowCount: 4 },
