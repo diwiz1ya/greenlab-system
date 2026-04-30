@@ -15,6 +15,10 @@ function runImmediateTransaction(db, work) {
 }
 
 async function runImmediateAsyncTransaction(db, work) {
+  if (!db || typeof db.exec !== "function") {
+    return work();
+  }
+
   db.exec("BEGIN IMMEDIATE;");
   try {
     const result = await work();

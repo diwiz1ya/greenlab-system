@@ -90,6 +90,12 @@ function createFakePool(options = {}) {
   );
   assert.deepEqual(sqliteRollbackCalls, [sqliteBeginImmediate, "work", "ROLLBACK;"]);
 
+  const asyncOnlyResult = await runImmediateAsyncTransaction(
+    {},
+    async () => "async-only-ok"
+  );
+  assert.equal(asyncOnlyResult, "async-only-ok");
+
   console.log("DB transaction tests: OK");
 })().catch((error) => {
   console.error(error);

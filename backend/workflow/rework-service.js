@@ -91,9 +91,10 @@ function createReworkWorkflow(options) {
     return reworkServiceCatalog[reason] || reworkServiceCatalog.stain_not_removed;
   }
 
-  function getBasketImages(basketId) {
+  async function getBasketImages(basketId) {
     if (!basketId) return [];
-    return reworkRepository.listBasketImages(basketId).map((row) => ({
+    const rows = await reworkRepository.listBasketImages(basketId);
+    return rows.map((row) => ({
       id: row.id,
       role: row.image_role,
       sort_order: Number(row.sort_order || 0),
@@ -103,9 +104,9 @@ function createReworkWorkflow(options) {
     }));
   }
 
-  function getIssueImageSelection(basketId, issueImageId) {
+  async function getIssueImageSelection(basketId, issueImageId) {
     if (!basketId) return { issueImages: [], selectedImage: null };
-    const issueImages = getBasketImages(basketId).filter((image) => image.role === "issue");
+    const issueImages = (await getBasketImages(basketId)).filter((image) => image.role === "issue");
     if (!issueImages.length) {
       return { issueImages, selectedImage: null };
     }
@@ -183,7 +184,7 @@ function createReworkWorkflow(options) {
     };
   }
 
-  function buildQcTransferTaskPayload(row) {
+  async function buildQcTransferTaskPayload(row) {
     if (!row) return null;
     const request = buildReworkRequestPayload(row);
     const taskKind = request.request_status === declinedWaitingReturnStatus
@@ -198,7 +199,7 @@ function createReworkWorkflow(options) {
         basket_kind: row.source_basket_kind,
         parent_basket_id: row.source_parent_basket_id
       });
-      const attempt = getNextReworkAttempt(row.order_id, rootBasketId);
+      const attempt = await getNextReworkAttempt(row.order_id, rootBasketId);
       plannedReworkBasketCode = buildReworkBasketCode(row.order_public_id, attempt);
       plannedReworkBasketQrCode = `QR:${plannedReworkBasketCode}`;
     }
@@ -251,7 +252,7 @@ function createReworkWorkflow(options) {
     const rows = await reworkRepository.listPendingQcTransferTasks({
       statuses: [approvedWaitingTransferStatus, declinedWaitingReturnStatus]
     });
-    return rows.map(buildQcTransferTaskPayload);
+    return Promise.all(rows.map(buildQcTransferTaskPayload));
   }
 
   function formatAllowedStationsForError(stations) {
@@ -343,7 +344,7 @@ function createReworkWorkflow(options) {
 
       await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-      reworkRepository.insertScanOkEvent({
+        await reworkRepository.insertScanOkEvent({
         orderId: request.order_id,
         basketId: request.source_basket_id,
         station: "qc",
@@ -356,7 +357,7 @@ function createReworkWorkflow(options) {
         ok: true,
         message: "Возврат в основной поток подтвержден. Корзина остается на QC.",
         order: await getOrderDetails(request.order_id),
-        task: buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
+        task: await buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
       };
     }
 
@@ -384,7 +385,7 @@ function createReworkWorkflow(options) {
       basket_kind: request.source_basket_kind,
       parent_basket_id: request.source_parent_basket_id
     });
-    const attempt = getNextReworkAttempt(request.order_id, rootBasketId);
+    const attempt = await getNextReworkAttempt(request.order_id, rootBasketId);
     const reworkBasketCode = buildReworkBasketCode(request.order_public_id, attempt);
     const expectedTargetQrCode = `QR:${reworkBasketCode}`;
 
@@ -445,7 +446,7 @@ function createReworkWorkflow(options) {
 
     await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    reworkRepository.insertScanOkEvent({
+    await reworkRepository.insertScanOkEvent({
       orderId: request.order_id,
       basketId: request.source_basket_id,
       station: "qc",
@@ -458,7 +459,7 @@ function createReworkWorkflow(options) {
       ok: true,
       message: `Передача подтверждена. Создана корзина ${reworkBasketCode}.`,
       order: await getOrderDetails(request.order_id),
-      task: buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
+      task: await buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
     };
   }
 
@@ -514,7 +515,7 @@ function createReworkWorkflow(options) {
       : basket.id;
   }
 
-  function getNextReworkAttempt(orderId, rootBasketId) {
+  async function getNextReworkAttempt(orderId, rootBasketId) {
     return reworkRepository.getNextReworkAttempt({ orderId, rootBasketId });
   }
 
@@ -557,7 +558,7 @@ function createReworkWorkflow(options) {
     }
 
     const pendingRequests = await listPendingReworkRequestsByBasketId(basket.id);
-    const images = getBasketImages(basket.id);
+    const images = await getBasketImages(basket.id);
 
     return {
       status: 200,
@@ -621,7 +622,7 @@ function createReworkWorkflow(options) {
       };
     }
 
-    const { issueImages, selectedImage } = getIssueImageSelection(basket.id, issueImageId);
+    const { issueImages, selectedImage } = await getIssueImageSelection(basket.id, issueImageId);
     if (issueImages.length && !selectedImage) {
       return {
         status: 400,
@@ -673,7 +674,7 @@ function createReworkWorkflow(options) {
       };
     }
 
-    const pendingRequests = listPendingReworkRequestsByBasketId(basket.id);
+    const pendingRequests = await listPendingReworkRequestsByBasketId(basket.id);
     if (pendingRequests.length) {
       return {
         status: 409,
