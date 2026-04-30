@@ -97,22 +97,24 @@ function createSortingWorkflow(options) {
     return Math.min(999, Math.floor(parsed));
   }
 
-  function listKnownCatalogQrs() {
-    return sortingRepository.listKnownCatalogQrs().map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
+  async function listKnownCatalogQrs() {
+    const rows = await sortingRepository.listKnownCatalogQrs();
+    return rows.map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
   }
 
-  function listFreeCatalogQrs(limit, excludeOrderId = 0) {
+  async function listFreeCatalogQrs(limit, excludeOrderId = 0) {
     const size = Number.isInteger(limit) ? Math.max(0, limit) : 0;
     if (size <= 0) return [];
-    return sortingRepository.listFreeCatalogQrs({ limit: size, excludeOrderId })
+    const rows = await sortingRepository.listFreeCatalogQrs({ limit: size, excludeOrderId });
+    return rows
       .map((row) => normalizeBasketQrCode(row.qr_code))
       .filter(Boolean);
   }
 
-  function assignAndValidateCatalogQrs(baskets, options = {}) {
+  async function assignAndValidateCatalogQrs(baskets, options = {}) {
     const list = Array.isArray(baskets) ? baskets : [];
     const excludeOrderId = Number(options.excludeOrderId || 0);
-    const knownQrs = new Set(listKnownCatalogQrs());
+    const knownQrs = new Set(await listKnownCatalogQrs());
     const missingIndexes = [];
 
     for (let index = 0; index < list.length; index += 1) {
@@ -124,7 +126,7 @@ function createSortingWorkflow(options) {
     }
 
     if (missingIndexes.length) {
-      const freeQrs = listFreeCatalogQrs(missingIndexes.length, excludeOrderId);
+      const freeQrs = await listFreeCatalogQrs(missingIndexes.length, excludeOrderId);
       if (freeQrs.length < missingIndexes.length) {
         return {
           error: `Not enough free baskets in BIN pool (needed ${missingIndexes.length}, available ${freeQrs.length}).`,
@@ -176,9 +178,9 @@ function createSortingWorkflow(options) {
     };
   }
 
-  function deleteBasketImageFilesByBasketIds(basketIds) {
+  async function deleteBasketImageFilesByBasketIds(basketIds) {
     if (!Array.isArray(basketIds) || !basketIds.length) return;
-    const images = sortingRepository.listBasketImagesByBasketIds(basketIds);
+    const images = await sortingRepository.listBasketImagesByBasketIds(basketIds);
 
     for (const image of images) {
       try {
@@ -190,19 +192,19 @@ function createSortingWorkflow(options) {
       }
     }
 
-    sortingRepository.deleteBasketImagesByBasketIds(basketIds);
+    await sortingRepository.deleteBasketImagesByBasketIds(basketIds);
   }
 
-  function deleteBasketAssetsByOrderId(orderId) {
-    const basketIds = sortingRepository.listBasketIdsByOrder(orderId);
-    deleteBasketImageFilesByBasketIds(basketIds);
+  async function deleteBasketAssetsByOrderId(orderId) {
+    const basketIds = await sortingRepository.listBasketIdsByOrder(orderId);
+    await deleteBasketImageFilesByBasketIds(basketIds);
   }
 
   async function saveBasketPhotos(basketId, orderId, basketCode, photos, timestamp) {
     for (let index = 0; index < photos.length; index += 1) {
       const photo = photos[index];
       const stored = await writeBasketPhotoFile(orderId, basketCode, photo, index);
-      sortingRepository.insertBasketImage({
+      await sortingRepository.insertBasketImage({
         basketId,
         role: photo.role,
         sortOrder: index,
@@ -287,14 +289,14 @@ function createSortingWorkflow(options) {
     };
   }
 
-  function findConflictingQrCode(qrCodes, excludeOrderId = 0) {
+  async function findConflictingQrCode(qrCodes, excludeOrderId = 0) {
     const list = Array.isArray(qrCodes)
       ? qrCodes.map((value) => String(value || "").trim()).filter(Boolean)
       : [];
     if (!list.length) return null;
 
     for (const qrCode of list) {
-      const row = sortingRepository.findConflictingQrCode({ qrCode, excludeOrderId });
+      const row = await sortingRepository.findConflictingQrCode({ qrCode, excludeOrderId });
       if (row?.qr_code) return row.qr_code;
     }
     return null;
@@ -308,7 +310,7 @@ function createSortingWorkflow(options) {
       if (!qrCode) {
         throw new Error("Basket QR is not specified.");
       }
-      const basketId = sortingRepository.insertBasket({
+      const basketId = await sortingRepository.insertBasket({
         orderId: order.id,
         basketCode,
         basketType: basket.type,
@@ -325,7 +327,7 @@ function createSortingWorkflow(options) {
   }
 
   async function createBaskets(orderId, payload, actor) {
-    const order = sortingRepository.findOrderById(orderId);
+    const order = await sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -333,7 +335,7 @@ function createSortingWorkflow(options) {
       return { error: "Order is not at sorting station.", status: 400 };
     }
 
-    const existing = sortingRepository.countBasketsByOrder(orderId);
+    const existing = await sortingRepository.countBasketsByOrder(orderId);
     if (existing > 0) {
       return { error: "Baskets are already created.", status: 400 };
     }
@@ -342,11 +344,11 @@ function createSortingWorkflow(options) {
     if (normalized.error) {
       return normalized;
     }
-    const prepared = assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: 0 });
+    const prepared = await assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: 0 });
     if (prepared.error) {
       return prepared;
     }
-    const qrConflict = findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode));
+    const qrConflict = await findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode));
     if (qrConflict) {
       return { error: `QR ${qrConflict} is already used by another order.`, status: 409 };
     }
@@ -361,9 +363,9 @@ function createSortingWorkflow(options) {
       return { error: error?.message || "Failed to create baskets.", status: 500 };
     }
 
-    sortingRepository.markOrderSorted({ orderId, timestamp });
+    await sortingRepository.markOrderSorted({ orderId, timestamp });
 
-    sortingRepository.insertSortingScanEvent({
+    await sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
       message: "Baskets created, QR labels prepared. Order is waiting for washing.",
@@ -375,11 +377,11 @@ function createSortingWorkflow(options) {
       status: "In progress"
     });
 
-    return { ok: true, order: getOrderDetails(orderId) };
+    return { ok: true, order: await getOrderDetails(orderId) };
   }
 
   async function updateSortedBaskets(orderId, payload, actor) {
-    const order = sortingRepository.findOrderById(orderId);
+    const order = await sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -391,24 +393,24 @@ function createSortingWorkflow(options) {
     if (normalized.error) {
       return normalized;
     }
-    const prepared = assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: orderId });
+    const prepared = await assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: orderId });
     if (prepared.error) {
       return prepared;
     }
-    const qrConflict = findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode), orderId);
+    const qrConflict = await findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode), orderId);
     if (qrConflict) {
       return { error: `QR ${qrConflict} is already used by another order.`, status: 409 };
     }
 
-    const basketCount = sortingRepository.countBasketsByOrder(orderId);
+    const basketCount = await sortingRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "Order has no baskets to edit.", status: 400 };
     }
 
     const timestamp = nowIso();
     try {
-      deleteBasketAssetsByOrderId(orderId);
-      sortingRepository.deleteBasketsByOrder(orderId);
+      await deleteBasketAssetsByOrderId(orderId);
+      await sortingRepository.deleteBasketsByOrder(orderId);
       await insertBaskets(order, prepared.baskets, timestamp);
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
@@ -417,20 +419,20 @@ function createSortingWorkflow(options) {
       return { error: error?.message || "Failed to update baskets.", status: 500 };
     }
 
-    sortingRepository.markOrderSorted({ orderId, timestamp });
+    await sortingRepository.markOrderSorted({ orderId, timestamp });
 
-    sortingRepository.insertSortingScanEvent({
+    await sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
       message: `Basket set updated: ${normalized.baskets.length} pcs. Order remains waiting for washing.`,
       timestamp
     });
 
-    return { ok: true, order: getOrderDetails(orderId) };
+    return { ok: true, order: await getOrderDetails(orderId) };
   }
 
-  function returnSortedOrderToSorting(orderId, actor) {
-    const order = sortingRepository.findOrderById(orderId);
+  async function returnSortedOrderToSorting(orderId, actor) {
+    const order = await sortingRepository.findOrderById(orderId);
     if (!order) {
       return { error: "Order not found.", status: 404 };
     }
@@ -438,18 +440,18 @@ function createSortingWorkflow(options) {
       return { error: "Return is available only for orders waiting for washing.", status: 400 };
     }
 
-    const basketCount = sortingRepository.countBasketsByOrder(orderId);
+    const basketCount = await sortingRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "Order has no baskets to return to sorting.", status: 400 };
     }
 
     const timestamp = nowIso();
-    deleteBasketAssetsByOrderId(orderId);
-    sortingRepository.deleteBasketsByOrder(orderId);
+    await deleteBasketAssetsByOrderId(orderId);
+    await sortingRepository.deleteBasketsByOrder(orderId);
 
-    sortingRepository.markOrderReturnedToSorting({ orderId, timestamp });
+    await sortingRepository.markOrderReturnedToSorting({ orderId, timestamp });
 
-    sortingRepository.insertSortingScanEvent({
+    await sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
       message: "Order returned to sorting. Baskets were removed, new split is required.",
@@ -461,7 +463,7 @@ function createSortingWorkflow(options) {
       status: "New order"
     });
 
-    return { ok: true, order: getOrderDetails(orderId) };
+    return { ok: true, order: await getOrderDetails(orderId) };
   }
 
   return {

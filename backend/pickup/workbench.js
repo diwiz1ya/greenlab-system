@@ -1,8 +1,8 @@
 function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
   void options;
 
-  function getOrderAssemblyProgress(orderId) {
-    const row = pickupWorkbenchRepository.getOrderAssemblyProgressRow(orderId);
+  async function getOrderAssemblyProgress(orderId) {
+    const row = await pickupWorkbenchRepository.getOrderAssemblyProgressRow(orderId);
 
     const totalOrderBaskets = Number(row?.total_baskets || 0);
     const basketsAtPickup = Number(row?.baskets_at_pickup || 0);
@@ -13,8 +13,8 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
     };
   }
 
-  function getPickupScanProgress(orderId) {
-    const rows = pickupWorkbenchRepository.listPickupScanProgressRows(orderId);
+  async function getPickupScanProgress(orderId) {
+    const rows = await pickupWorkbenchRepository.listPickupScanProgressRows(orderId);
 
     const baskets = rows.map((row) => ({
       id: row.id,
@@ -33,8 +33,9 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
     };
   }
 
-  function getPickupPlacementRows(orderId) {
-    return pickupWorkbenchRepository.listPickupPlacementRows(orderId).map((row) => ({
+  async function getPickupPlacementRows(orderId) {
+    const rows = await pickupWorkbenchRepository.listPickupPlacementRows(orderId);
+    return rows.map((row) => ({
       slot_index: Number(row.slot_index || 0),
       bin_qr_code: String(row.bin_qr_code || "").trim(),
       location_qr_code: String(row.location_qr_code || "").trim(),
@@ -44,10 +45,10 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
     }));
   }
 
-  function buildPickupOrderRow(row) {
-    const progress = getPickupScanProgress(row.id);
-    const assembly = getOrderAssemblyProgress(row.id);
-    const placements = getPickupPlacementRows(row.id);
+  async function buildPickupOrderRow(row) {
+    const progress = await getPickupScanProgress(row.id);
+    const assembly = await getOrderAssemblyProgress(row.id);
+    const placements = await getPickupPlacementRows(row.id);
     return {
       ...row,
       ready_to_place: Boolean(row.ready_to_place),
@@ -65,25 +66,27 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
     };
   }
 
-  function listAssemblyOrders() {
-    const rows = pickupWorkbenchRepository.listAssemblyOrders();
-    return rows.map(buildPickupOrderRow);
+  async function listAssemblyOrders() {
+    const rows = await pickupWorkbenchRepository.listAssemblyOrders();
+    return Promise.all(rows.map(buildPickupOrderRow));
   }
 
-  function listReadyToPlaceOrders() {
-    const rows = pickupWorkbenchRepository.listReadyToPlaceOrders();
-    return rows.map(buildPickupOrderRow);
+  async function listReadyToPlaceOrders() {
+    const rows = await pickupWorkbenchRepository.listReadyToPlaceOrders();
+    return Promise.all(rows.map(buildPickupOrderRow));
   }
 
-  function listPlacedOrders() {
-    const rows = pickupWorkbenchRepository.listPlacedOrders();
-    return rows.map(buildPickupOrderRow);
+  async function listPlacedOrders() {
+    const rows = await pickupWorkbenchRepository.listPlacedOrders();
+    return Promise.all(rows.map(buildPickupOrderRow));
   }
 
-  function getPickupWorkbenchSnapshot() {
-    const assemblyOrders = listAssemblyOrders();
-    const readyToPlaceOrders = listReadyToPlaceOrders();
-    const placedOrders = listPlacedOrders();
+  async function getPickupWorkbenchSnapshot() {
+    const [assemblyOrders, readyToPlaceOrders, placedOrders] = await Promise.all([
+      listAssemblyOrders(),
+      listReadyToPlaceOrders(),
+      listPlacedOrders()
+    ]);
 
     return {
       assemblyOrders,

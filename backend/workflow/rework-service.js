@@ -222,33 +222,36 @@ function createReworkWorkflow(options) {
     };
   }
 
-  function listReworkRequestsByOrder(orderId) {
-    return reworkRepository.listReworkRequestsByOrder(orderId).map(buildReworkRequestPayload);
+  async function listReworkRequestsByOrder(orderId) {
+    const rows = await reworkRepository.listReworkRequestsByOrder(orderId);
+    return rows.map(buildReworkRequestPayload);
   }
 
-  function listPendingReworkRequestsByBasketId(basketId) {
-    return reworkRepository.listPendingReworkRequestsByBasketId({
+  async function listPendingReworkRequestsByBasketId(basketId) {
+    const rows = await reworkRepository.listPendingReworkRequestsByBasketId({
       basketId,
       statuses: [
         pendingCustomerApprovalStatus,
         approvedWaitingTransferStatus,
         declinedWaitingReturnStatus
       ]
-    }).map(buildReworkRequestPayload);
+    });
+    return rows.map(buildReworkRequestPayload);
   }
 
-  function getReworkRequestWithContext(requestId) {
+  async function getReworkRequestWithContext(requestId) {
     return reworkRepository.getReworkRequestWithContext(requestId);
   }
 
-  function getQcTransferTaskWithContext(requestId) {
+  async function getQcTransferTaskWithContext(requestId) {
     return reworkRepository.getQcTransferTaskWithContext(requestId);
   }
 
-  function listPendingQcTransferTasks() {
-    return reworkRepository.listPendingQcTransferTasks({
+  async function listPendingQcTransferTasks() {
+    const rows = await reworkRepository.listPendingQcTransferTasks({
       statuses: [approvedWaitingTransferStatus, declinedWaitingReturnStatus]
-    }).map(buildQcTransferTaskPayload);
+    });
+    return rows.map(buildQcTransferTaskPayload);
   }
 
   function formatAllowedStationsForError(stations) {
@@ -270,11 +273,11 @@ function createReworkWorkflow(options) {
     return "";
   }
 
-  function confirmQcTransferTask(requestId, actor, payload = {}) {
+  async function confirmQcTransferTask(requestId, actor, payload = {}) {
     const sourceQrCodeInput = String(payload.sourceQrCode || "").trim();
     const targetQrCodeInput = String(payload.targetQrCode || "").trim();
     const handoffNoteInput = payload.handoffNote || "";
-    const request = getQcTransferTaskWithContext(requestId);
+    const request = await getQcTransferTaskWithContext(requestId);
     if (!request) {
       return { error: "Запрос на доработку не найден", status: 404 };
     }
@@ -310,7 +313,7 @@ function createReworkWorkflow(options) {
 
     if (isReturnToFlow) {
       if (request.source_station !== "qc") {
-        const moveSourceToQc = reworkRepository.updateBasketStationStatusIfCurrent({
+        const moveSourceToQc = await reworkRepository.updateBasketStationStatusIfCurrent({
           basketId: request.source_basket_id,
           station: "qc",
           status: "qc",
@@ -323,7 +326,7 @@ function createReworkWorkflow(options) {
         }
       }
 
-      const updateReturnTask = reworkRepository.confirmReturnTask({
+      const updateReturnTask = await reworkRepository.confirmReturnTask({
         requestId,
         requestStatus: declinedRequestStatus,
         decisionActor: request.decision_actor || actor,
@@ -338,7 +341,7 @@ function createReworkWorkflow(options) {
         return { error: "Задача уже обработана или изменена другим пользователем.", status: 409 };
       }
 
-      refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
+      await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
       reworkRepository.insertScanOkEvent({
         orderId: request.order_id,
@@ -352,8 +355,8 @@ function createReworkWorkflow(options) {
       return {
         ok: true,
         message: "Возврат в основной поток подтвержден. Корзина остается на QC.",
-        order: getOrderDetails(request.order_id),
-        task: buildQcTransferTaskPayload(getQcTransferTaskWithContext(requestId))
+        order: await getOrderDetails(request.order_id),
+        task: buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
       };
     }
 
@@ -398,7 +401,7 @@ function createReworkWorkflow(options) {
     const reworkItemCounts = buildSingleItemCounts(itemCategory, quantity);
     const nextSourceStation = remainingCounts.total > 0 ? "qc" : inactiveReworkSourceState;
 
-    const reworkBasketId = reworkRepository.createReworkBasket({
+    const reworkBasketId = await reworkRepository.createReworkBasket({
       orderId: request.order_id,
       basketCode: reworkBasketCode,
       basketType: request.source_basket_type,
@@ -411,7 +414,7 @@ function createReworkWorkflow(options) {
       timestamp
     });
 
-    const updateSourceBasketAfterTransfer = reworkRepository.updateSourceBasketAfterTransfer({
+    const updateSourceBasketAfterTransfer = await reworkRepository.updateSourceBasketAfterTransfer({
       sourceBasketId: request.source_basket_id,
       basketItemsJson: itemCountsToJson(remainingCounts),
       station: nextSourceStation,
@@ -424,7 +427,7 @@ function createReworkWorkflow(options) {
       return { error: "Источник изменился во время подтверждения. Обновите задачи и повторите.", status: 409 };
     }
 
-    const updateTransferTask = reworkRepository.confirmTransferTask({
+    const updateTransferTask = await reworkRepository.confirmTransferTask({
       requestId,
       reworkBasketId,
       requestStatus: approvedRequestStatus,
@@ -440,7 +443,7 @@ function createReworkWorkflow(options) {
       return { error: "Задача уже обработана или изменена другим пользователем.", status: 409 };
     }
 
-    refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
+    await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
     reworkRepository.insertScanOkEvent({
       orderId: request.order_id,
@@ -454,12 +457,12 @@ function createReworkWorkflow(options) {
     return {
       ok: true,
       message: `Передача подтверждена. Создана корзина ${reworkBasketCode}.`,
-      order: getOrderDetails(request.order_id),
-      task: buildQcTransferTaskPayload(getQcTransferTaskWithContext(requestId))
+      order: await getOrderDetails(request.order_id),
+      task: buildQcTransferTaskPayload(await getQcTransferTaskWithContext(requestId))
     };
   }
 
-  function getBasketWithOrderByQr(qrCode) {
+  async function getBasketWithOrderByQr(qrCode) {
     return reworkRepository.findBasketWithOrderByQr(qrCode);
   }
 
@@ -522,8 +525,8 @@ function createReworkWorkflow(options) {
     return `RW-${suffix}-${attempt}`;
   }
 
-  function inspectQcBasket(qrCode) {
-    const basket = reworkRepository.findQcBasketForInspection(qrCode);
+  async function inspectQcBasket(qrCode) {
+    const basket = await reworkRepository.findQcBasketForInspection(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
@@ -553,7 +556,7 @@ function createReworkWorkflow(options) {
       };
     }
 
-    const pendingRequests = listPendingReworkRequestsByBasketId(basket.id);
+    const pendingRequests = await listPendingReworkRequestsByBasketId(basket.id);
     const images = getBasketImages(basket.id);
 
     return {
@@ -578,8 +581,8 @@ function createReworkWorkflow(options) {
     };
   }
 
-  function createReworkRequestFromQc(qrCode, actor, payload = {}) {
-    const basket = getBasketWithOrderByQr(qrCode);
+  async function createReworkRequestFromQc(qrCode, actor, payload = {}) {
+    const basket = await getBasketWithOrderByQr(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
@@ -696,7 +699,7 @@ function createReworkWorkflow(options) {
         };
       }
     }
-    const requestId = reworkRepository.createPendingReworkRequest({
+    const requestId = await reworkRepository.createPendingReworkRequest({
       orderId: basket.order_id,
       sourceBasketId: basket.id,
       itemCategory,
@@ -712,18 +715,18 @@ function createReworkWorkflow(options) {
       timestamp
     });
 
-    const request = buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId));
+    const request = buildReworkRequestPayload(await reworkRepository.getReworkRequestById(requestId));
 
-    reworkRepository.updateBasketStationStatus({
+    await reworkRepository.updateBasketStationStatus({
       basketId: basket.id,
       station: customerApprovalStation,
       status: customerApprovalStation,
       timestamp
     });
 
-    refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
+    await refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-    reworkRepository.insertScanOkEvent({
+    await reworkRepository.insertScanOkEvent({
       orderId,
       basketId: basket.id,
       station: customerApprovalStation,
@@ -737,7 +740,7 @@ function createReworkWorkflow(options) {
       payload: {
         ok: true,
         message: `Запрос на доп обработку отправлен на согласование клиента. Корзина ожидает решения менеджера: ${serviceDetails.serviceLabel}, +${serviceDetails.extraDays} day.`,
-        order: getOrderDetails(orderId),
+        order: await getOrderDetails(orderId),
         basket: getBasketPayload({
           ...basket,
           station: customerApprovalStation,
@@ -748,8 +751,8 @@ function createReworkWorkflow(options) {
     };
   }
 
-  function approveReworkRequest(requestId, actor, decisionNote = "") {
-    const request = getReworkRequestWithContext(requestId);
+  async function approveReworkRequest(requestId, actor, decisionNote = "") {
+    const request = await getReworkRequestWithContext(requestId);
     if (!request) {
       return { error: "Запрос на доработку не найден", status: 404 };
     }
@@ -766,7 +769,7 @@ function createReworkWorkflow(options) {
     }
     const timestamp = nowIso();
 
-    const lockBasketInApproval = reworkRepository.updateBasketStationStatusIfCurrent({
+    const lockBasketInApproval = await reworkRepository.updateBasketStationStatusIfCurrent({
       basketId: request.source_basket_id,
       station: customerApprovalStation,
       status: customerApprovalStation,
@@ -778,7 +781,7 @@ function createReworkWorkflow(options) {
       return { error: "Состояние корзины изменилось. Обновите кейс и попробуйте снова.", status: 409 };
     }
 
-    const updateRequestAfterApprove = reworkRepository.updateReworkRequestDecision({
+    const updateRequestAfterApprove = await reworkRepository.updateReworkRequestDecision({
       requestId,
       requestStatus: approvedWaitingTransferStatus,
       actor,
@@ -790,9 +793,9 @@ function createReworkWorkflow(options) {
       return { error: "Запрос уже обработан другим пользователем.", status: 409 };
     }
 
-    refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
+    await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    reworkRepository.insertScanOkEvent({
+    await reworkRepository.insertScanOkEvent({
       orderId: request.order_id,
       basketId: request.source_basket_id,
       station: customerApprovalStation,
@@ -804,13 +807,13 @@ function createReworkWorkflow(options) {
     return {
       ok: true,
       message: "Клиент согласовал доп обработку. QC должен подтвердить физическую передачу вещи в доработку.",
-      order: getOrderDetails(request.order_id),
-      request: buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId))
+      order: await getOrderDetails(request.order_id),
+      request: buildReworkRequestPayload(await reworkRepository.getReworkRequestById(requestId))
     };
   }
 
-  function declineReworkRequest(requestId, actor, decisionNote = "") {
-    const request = getReworkRequestWithContext(requestId);
+  async function declineReworkRequest(requestId, actor, decisionNote = "") {
+    const request = await getReworkRequestWithContext(requestId);
     if (!request) {
       return { error: "Запрос на доработку не найден", status: 404 };
     }
@@ -829,7 +832,7 @@ function createReworkWorkflow(options) {
     const timestamp = nowIso();
 
     if (request.source_station === customerApprovalStation) {
-      const moveSourceBackToQc = reworkRepository.updateBasketStationStatusIfCurrent({
+      const moveSourceBackToQc = await reworkRepository.updateBasketStationStatusIfCurrent({
         basketId: request.source_basket_id,
         station: "qc",
         status: "qc",
@@ -842,7 +845,7 @@ function createReworkWorkflow(options) {
       }
     }
 
-    const updateRequestAfterDecline = reworkRepository.updateReworkRequestDecision({
+    const updateRequestAfterDecline = await reworkRepository.updateReworkRequestDecision({
       requestId,
       requestStatus: declinedWaitingReturnStatus,
       actor,
@@ -854,9 +857,9 @@ function createReworkWorkflow(options) {
       return { error: "Запрос уже обработан другим пользователем.", status: 409 };
     }
 
-    refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
+    await refreshOrderStatusFromBaskets(request.order_id, request.cleancloud_order_id, timestamp);
 
-    reworkRepository.insertScanOkEvent({
+    await reworkRepository.insertScanOkEvent({
       orderId: request.order_id,
       basketId: request.source_basket_id,
       station: customerApprovalStation,
@@ -870,13 +873,13 @@ function createReworkWorkflow(options) {
     return {
       ok: true,
       message: "Клиент отказался от дополнительной обработки. QC должен подтвердить возврат вещи в основной поток.",
-      order: getOrderDetails(request.order_id),
-      request: buildReworkRequestPayload(reworkRepository.getReworkRequestById(requestId))
+      order: await getOrderDetails(request.order_id),
+      request: buildReworkRequestPayload(await reworkRepository.getReworkRequestById(requestId))
     };
   }
 
-  function rejectBasketFromQc(qrCode, actor, issueCode) {
-    const basket = getBasketWithOrderByQr(qrCode);
+  async function rejectBasketFromQc(qrCode, actor, issueCode) {
+    const basket = await getBasketWithOrderByQr(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
@@ -901,9 +904,9 @@ function createReworkWorkflow(options) {
       return validationError;
     }
 
-    reworkRepository.updateOrderBasketsToHold({ orderId, holdStation, timestamp });
-    reworkRepository.updateOrderToHold({ orderId, holdStation, holdCloudStatus, timestamp });
-    reworkRepository.insertQcScanErrorEvent({
+    await reworkRepository.updateOrderBasketsToHold({ orderId, holdStation, timestamp });
+    await reworkRepository.updateOrderToHold({ orderId, holdStation, holdCloudStatus, timestamp });
+    await reworkRepository.insertQcScanErrorEvent({
       orderId,
       basketId: basket.id,
       actor,
@@ -917,7 +920,7 @@ function createReworkWorkflow(options) {
         ok: true,
         message: `QC: ${issueLabel}. Заказ переведён в HOLD, требуется менеджер.`,
         issue: { code: issue, label: issueLabel },
-        order: getOrderDetails(orderId),
+        order: await getOrderDetails(orderId),
         basket: getBasketPayload({
           ...basket,
           station: holdStation,

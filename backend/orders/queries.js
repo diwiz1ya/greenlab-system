@@ -32,14 +32,15 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     }
   }
 
-  function getOrderDetails(orderId) {
-    const order = orderQueryRepository.findOrderById(orderId);
+  async function getOrderDetails(orderId) {
+    const order = await orderQueryRepository.findOrderById(orderId);
 
     if (!order) {
       return null;
     }
 
-    const baskets = orderQueryRepository.listBasketsByOrderId(orderId).map((basket) => {
+    const basketRows = await orderQueryRepository.listBasketsByOrderId(orderId);
+    const baskets = basketRows.map((basket) => {
       const { basket_items_json, ...rest } = basket;
       return {
         ...rest,
@@ -49,7 +50,7 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     const basketIds = baskets.map((basket) => basket.id);
     const imagesByBasketId = new Map();
     if (basketIds.length) {
-      const imageRows = orderQueryRepository.listBasketImagesByBasketIds(basketIds);
+      const imageRows = await orderQueryRepository.listBasketImagesByBasketIds(basketIds);
 
       for (const row of imageRows) {
         if (!imagesByBasketId.has(row.basket_id)) {
@@ -69,14 +70,15 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       basket.images = imagesByBasketId.get(basket.id) || [];
     }
 
-    const scans = orderQueryRepository.listRecentScansByOrderId(orderId);
-    const pickupPlacements = orderQueryRepository.listPickupPlacementsByOrderId(orderId).map((row) => ({
+    const scans = await orderQueryRepository.listRecentScansByOrderId(orderId);
+    const pickupPlacementRows = await orderQueryRepository.listPickupPlacementsByOrderId(orderId);
+    const pickupPlacements = pickupPlacementRows.map((row) => ({
       slot_index: Number(row.slot_index || 1),
       bin_qr_code: row.bin_qr_code || "",
       location_qr_code: row.location_qr_code || "",
       placed_at: row.placed_at || null
     }));
-    const machineUsageRows = orderQueryRepository.listMachineUsageByOrderId(orderId);
+    const machineUsageRows = await orderQueryRepository.listMachineUsageByOrderId(orderId);
     const machineUsage = { washing: [], drying: [], other: [] };
     for (const row of machineUsageRows) {
       const entry = {
@@ -93,7 +95,8 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       }
     }
 
-    const reworkRequests = orderQueryRepository.listReworkRequestsByOrderId(orderId).map((row) => ({
+    const reworkRequestRows = await orderQueryRepository.listReworkRequestsByOrderId(orderId);
+    const reworkRequests = reworkRequestRows.map((row) => ({
       id: row.id,
       order_id: row.order_id,
       source_basket_id: row.source_basket_id,
@@ -140,7 +143,7 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     };
   }
 
-  function getOverview() {
+  async function getOverview() {
     const counts = {};
     for (const station of Object.keys(stationLabels)) {
       if (station === "overview") {
@@ -149,16 +152,17 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       }
 
       if (station === "sorting") {
-        counts.sorting = orderQueryRepository.countSortingOrders();
+        counts.sorting = await orderQueryRepository.countSortingOrders();
         continue;
       }
 
-      counts[station] = orderQueryRepository.countOrdersByBasketStation(station);
+      counts[station] = await orderQueryRepository.countOrdersByBasketStation(station);
     }
-    counts.hold = orderQueryRepository.countOrdersByBasketStation(holdStation);
-    counts.ready = orderQueryRepository.countReadyOrders();
+    counts.hold = await orderQueryRepository.countOrdersByBasketStation(holdStation);
+    counts.ready = await orderQueryRepository.countReadyOrders();
 
-    const orders = orderQueryRepository.listOverviewOrders().map((row) => ({
+    const overviewRows = await orderQueryRepository.listOverviewOrders();
+    const orders = overviewRows.map((row) => ({
       ...row,
       ready_to_place: Boolean(row.ready_to_place),
       ready_for_pickup: Boolean(row.ready_for_pickup),
@@ -172,7 +176,7 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       rework_declined_count: Number(row.rework_declined_count || 0),
       max_rework_attempt: Number(row.max_rework_attempt || 0)
     }));
-    const pickupPlacements = orderQueryRepository.listActivePickupPlacements();
+    const pickupPlacements = await orderQueryRepository.listActivePickupPlacements();
     const placementsByOrderId = new Map();
     for (const row of pickupPlacements) {
       const orderId = Number(row.order_id);
@@ -192,9 +196,9 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       order.pickup_placements = placements;
       order.pickup_placement_count = placements.length;
     }
-    const managerKpiCore = orderQueryRepository.getManagerKpiCore();
-    const managerKpiRework = orderQueryRepository.getManagerKpiRework();
-    const managerKpiPickup = orderQueryRepository.getManagerKpiPickup();
+    const managerKpiCore = await orderQueryRepository.getManagerKpiCore();
+    const managerKpiRework = await orderQueryRepository.getManagerKpiRework();
+    const managerKpiPickup = await orderQueryRepository.getManagerKpiPickup();
 
     const decisionsTotal = Number(managerKpiCore.decisions_total || 0);
     const declinedTotal = Number(managerKpiCore.declined_total || 0);
@@ -221,22 +225,24 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     return { counts, orders, manager_kpi };
   }
 
-  function listStationOrders(station) {
+  async function listStationOrders(station) {
     if (station === "sorting") {
-      return orderQueryRepository.listSortingStationOrders().map((row) => ({ ...row, ready_to_place: Boolean(row.ready_to_place), ready_for_pickup: Boolean(row.ready_for_pickup) }));
+      const rows = await orderQueryRepository.listSortingStationOrders();
+      return rows.map((row) => ({ ...row, ready_to_place: Boolean(row.ready_to_place), ready_for_pickup: Boolean(row.ready_for_pickup) }));
     }
 
-    return orderQueryRepository.listActiveStationOrders(station).map((row) => ({
+    const rows = await orderQueryRepository.listActiveStationOrders(station);
+    return rows.map((row) => ({
       ...row,
       ready_to_place: Boolean(row.ready_to_place),
       ready_for_pickup: Boolean(row.ready_for_pickup)
     }));
   }
 
-  function getQcLiveMetrics() {
-    const basketsInQc = orderQueryRepository.countQcBaskets();
-    const ordersInQcQueue = orderQueryRepository.countQcOrdersFromBaskets();
-    const ordersInQcStatus = orderQueryRepository.countQcStatusOrders();
+  async function getQcLiveMetrics() {
+    const basketsInQc = await orderQueryRepository.countQcBaskets();
+    const ordersInQcQueue = await orderQueryRepository.countQcOrdersFromBaskets();
+    const ordersInQcStatus = await orderQueryRepository.countQcStatusOrders();
 
     return {
       basketsInQc,

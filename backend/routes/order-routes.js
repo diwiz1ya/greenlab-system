@@ -1,6 +1,6 @@
 const { parsePositiveInt, parseStation } = require("../http/validation");
 
-function handleOrderRoutes(req, res, url, ctx) {
+async function handleOrderRoutes(req, res, url, ctx) {
   const {
     requireAuth,
     requireStationAccess,
@@ -22,7 +22,7 @@ function handleOrderRoutes(req, res, url, ctx) {
       return true;
     }
 
-    const order = getOrderDetails(id);
+    const order = await getOrderDetails(id);
     if (!order) {
       json(res, 404, { error: "Order not found" });
       return true;
@@ -47,11 +47,11 @@ function handleOrderRoutes(req, res, url, ctx) {
     }
     if (!requireStationAccess(session, station, res)) return true;
 
-    const orders = listStationOrders(station);
+    const orders = await listStationOrders(station);
     if (station === "qc") {
       json(res, 200, {
         orders,
-        metrics: getQcLiveMetrics()
+        metrics: await getQcLiveMetrics()
       });
       return true;
     }

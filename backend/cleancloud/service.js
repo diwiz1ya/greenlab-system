@@ -288,7 +288,7 @@ function createCleanCloudService(options) {
     return {
       ok: true,
       message: updateSummary,
-      order: getOrderDetails(orderId)
+      order: await getOrderDetails(orderId)
     };
   }
 

@@ -1,7 +1,7 @@
 const { parseRequiredString } = require("../http/validation");
 const { getClientIp } = require("../http/request-meta");
 
-function handleAuthRoutes(req, res, url, ctx) {
+async function handleAuthRoutes(req, res, url, ctx) {
   const {
     userRepository,
     readJson,
@@ -23,7 +23,7 @@ function handleAuthRoutes(req, res, url, ctx) {
         const username = parseRequiredString(body.username, { minLength: 2, maxLength: 64 });
         const password = parseRequiredString(body.password, { minLength: 1, maxLength: 256 });
         if (!username || !password) {
-          logSecurityEvent({
+          await logSecurityEvent({
             category: "auth.login.invalid_payload",
             actor: username || "anonymous",
             ip: clientIp,
@@ -39,7 +39,7 @@ function handleAuthRoutes(req, res, url, ctx) {
         const limiterResult = loginRateLimiter.hit(`${clientIp}:${username}`);
         if (!limiterResult.allowed) {
           res.setHeader("Retry-After", String(limiterResult.retryAfterSec));
-          logSecurityEvent({
+          await logSecurityEvent({
             category: "auth.login.rate_limited",
             actor: username,
             ip: clientIp,
@@ -52,10 +52,10 @@ function handleAuthRoutes(req, res, url, ctx) {
           return true;
         }
 
-        const user = userRepository.findLoginUserByUsername(username);
+        const user = await userRepository.findLoginUserByUsername(username);
 
         if (!user || !verifyHashedPassword(password, user.password_hash)) {
-          logSecurityEvent({
+          await logSecurityEvent({
             category: "auth.login.failed",
             actor: username,
             ip: clientIp,
@@ -69,7 +69,7 @@ function handleAuthRoutes(req, res, url, ctx) {
         }
 
         const session = sessionStore.createFromUser(user);
-        logSecurityEvent({
+        await logSecurityEvent({
           category: "auth.login.success",
           actor: session.username,
           ip: clientIp,
@@ -92,7 +92,7 @@ function handleAuthRoutes(req, res, url, ctx) {
         return true;
       } catch (error) {
         const clientIp = getClientIp(req, { trustProxy });
-        logSecurityEvent({
+        await logSecurityEvent({
           category: "auth.login.invalid_json",
           actor: "anonymous",
           ip: clientIp,
@@ -127,7 +127,7 @@ function handleAuthRoutes(req, res, url, ctx) {
     const session = auth(req);
     if (session) {
       sessionStore.deleteByToken(session.token);
-      logSecurityEvent({
+      await logSecurityEvent({
         category: "auth.logout",
         actor: session.username,
         ip: getClientIp(req, { trustProxy }),

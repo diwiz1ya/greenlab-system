@@ -1,6 +1,6 @@
 const { parsePositiveInt, parseStation } = require("../http/validation");
 
-function handleCoreRoutes(req, res, url, ctx) {
+async function handleCoreRoutes(req, res, url, ctx) {
   const {
     coreRepository,
     readJson,
@@ -65,8 +65,8 @@ function handleCoreRoutes(req, res, url, ctx) {
     if (!session) return true;
     if (!requireManager(session, res)) return true;
 
-    seedDemoData({ force: true });
-    const counts = coreRepository.getDemoResetCounts();
+    await seedDemoData({ force: true });
+    const counts = await coreRepository.getDemoResetCounts();
     json(res, 200, {
       ok: true,
       message: "Demo data reset completed.",
@@ -93,7 +93,7 @@ function handleCoreRoutes(req, res, url, ctx) {
     json(res, 200, {
       station,
       total: limit,
-      rows: getRecentScansByStation(station, limit)
+      rows: await getRecentScansByStation(station, limit)
     });
     return true;
   }
@@ -112,7 +112,7 @@ function handleCoreRoutes(req, res, url, ctx) {
       return true;
     }
 
-    const rows = getScanExportRows(orderId);
+    const rows = await getScanExportRows(orderId);
 
     if (format === "json") {
       json(res, 200, {
@@ -143,7 +143,7 @@ function handleCoreRoutes(req, res, url, ctx) {
     if (!session) return true;
     if (!requireStationAccess(session, "overview", res)) return true;
 
-    json(res, 200, getOverview());
+    json(res, 200, await getOverview());
     return true;
   }
 

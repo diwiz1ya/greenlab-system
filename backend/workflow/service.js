@@ -107,8 +107,8 @@ function createWorkflowService(options) {
     itemCountsToJson
   });
 
-  function getOrderProgressFromBaskets(orderId) {
-    const rows = workflowRepository.listOrderProgressStations(orderId);
+  async function getOrderProgressFromBaskets(orderId) {
+    const rows = await workflowRepository.listOrderProgressStations(orderId);
 
     if (!rows.length) {
       return {
@@ -157,26 +157,26 @@ function createWorkflowService(options) {
     };
   }
 
-  function syncPickupAssemblyFlags(orderId, timestamp) {
-    const order = workflowRepository.findPickupAssemblyOrder(orderId);
+  async function syncPickupAssemblyFlags(orderId, timestamp) {
+    const order = await workflowRepository.findPickupAssemblyOrder(orderId);
     if (!order) {
       return { readyToPlace: false, progress: { totalBaskets: 0, scannedBaskets: 0, complete: false, baskets: [] } };
     }
 
     if (order.status !== "pickup" || Boolean(order.ready_for_pickup)) {
-      workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace: false, timestamp });
+      await workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace: false, timestamp });
       return {
         readyToPlace: false,
-        progress: getPickupScanProgress(orderId)
+        progress: await getPickupScanProgress(orderId)
       };
     }
 
-    const progress = getPickupScanProgress(orderId);
+    const progress = await getPickupScanProgress(orderId);
     const readyToPlace = progress.totalBaskets > 0 && progress.scannedBaskets >= progress.totalBaskets;
     if (readyToPlace) {
-      releasePickupAssemblyBins(orderId, timestamp);
+      await releasePickupAssemblyBins(orderId, timestamp);
     }
-    workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace, timestamp });
+    await workflowRepository.updateOrderReadyToPlace({ orderId, readyToPlace, timestamp });
 
     return {
       readyToPlace,
@@ -184,15 +184,15 @@ function createWorkflowService(options) {
     };
   }
 
-  function getPickupInvariantState(orderId) {
-    const order = workflowRepository.findPickupInvariantOrder(orderId);
+  async function getPickupInvariantState(orderId) {
+    const order = await workflowRepository.findPickupInvariantOrder(orderId);
     if (!order) {
       return null;
     }
 
-    const baskets = workflowRepository.listActiveBasketsByOrder(orderId);
-    const activePlacements = workflowRepository.listActivePickupPlacementsByOrder(orderId);
-    const progress = getPickupScanProgress(orderId);
+    const baskets = await workflowRepository.listActiveBasketsByOrder(orderId);
+    const activePlacements = await workflowRepository.listActivePickupPlacementsByOrder(orderId);
+    const progress = await getPickupScanProgress(orderId);
 
     return {
       order,
@@ -202,14 +202,14 @@ function createWorkflowService(options) {
     };
   }
 
-  function validatePickupInvariantState(orderId, options = {}) {
+  async function validatePickupInvariantState(orderId, options = {}) {
     const {
       requirePickupStatus = false,
       requireReadyToPlace = false,
       requireReadyForPickup = false
     } = options;
 
-    const state = getPickupInvariantState(orderId);
+    const state = await getPickupInvariantState(orderId);
     if (!state) {
       return { ok: false, error: "Заказ не найден.", status: 404 };
     }
@@ -327,25 +327,25 @@ function createWorkflowService(options) {
     };
   }
 
-  function refreshOrderStatusFromBaskets(orderId, cleancloudOrderId, timestamp) {
+  async function refreshOrderStatusFromBaskets(orderId, cleancloudOrderId, timestamp) {
     void cleancloudOrderId;
-    const next = getOrderProgressFromBaskets(orderId);
+    const next = await getOrderProgressFromBaskets(orderId);
 
     if (next.status === "pickup") {
-      workflowRepository.updateOrderStatusForPickup({
+      await workflowRepository.updateOrderStatusForPickup({
         orderId,
         status: next.status,
         cleancloudStatus: next.cleancloudStatus,
         timestamp
       });
-      const pickupFlags = syncPickupAssemblyFlags(orderId, timestamp);
+      const pickupFlags = await syncPickupAssemblyFlags(orderId, timestamp);
       return {
         ...next,
         readyToPlace: pickupFlags.readyToPlace
       };
     }
 
-    workflowRepository.updateOrderStatusAndClearPickupFlags({
+    await workflowRepository.updateOrderStatusAndClearPickupFlags({
       orderId,
       status: next.status,
       cleancloudStatus: next.cleancloudStatus,
@@ -414,8 +414,8 @@ function createWorkflowService(options) {
     return normalized;
   }
 
-  function releasePickupAssemblyBins(orderId, timestamp) {
-    const rows = workflowRepository.listPickupAssemblyBaskets(orderId);
+  async function releasePickupAssemblyBins(orderId, timestamp) {
+    const rows = await workflowRepository.listPickupAssemblyBaskets(orderId);
     if (!rows.length) return;
 
     for (const row of rows) {
@@ -427,7 +427,7 @@ function createWorkflowService(options) {
       if (currentQr === nextQr) continue;
       if (!pickupBinQrPattern.test(currentQr)) continue;
 
-      workflowRepository.updateBasketQr({ basketId: row.id, qrCode: nextQr, timestamp });
+      await workflowRepository.updateBasketQr({ basketId: row.id, qrCode: nextQr, timestamp });
     }
   }
 
@@ -869,8 +869,8 @@ function createWorkflowService(options) {
     };
   }
 
-  function insertScanEvent(orderId, basketId, station, actor, result, message, timestamp) {
-    workflowRepository.insertScanEvent({
+  async function insertScanEvent(orderId, basketId, station, actor, result, message, timestamp) {
+    await workflowRepository.insertScanEvent({
       orderId,
       basketId,
       station,
@@ -881,8 +881,8 @@ function createWorkflowService(options) {
     });
   }
 
-  function scanBasket(station, qrCode, actor, options = {}) {
-    const basket = getBasketWithOrderByQr(qrCode);
+  async function scanBasket(station, qrCode, actor, options = {}) {
+    const basket = await getBasketWithOrderByQr(qrCode);
 
     if (!basket) {
       return { status: 404, payload: { ok: false, message: "QR-код не найден." } };
@@ -900,14 +900,14 @@ function createWorkflowService(options) {
       && expectedOrderId > 0
       && expectedOrderId !== orderId
     ) {
-      const expectedOrder = workflowRepository.findOrderPublicId(expectedOrderId);
+      const expectedOrder = await workflowRepository.findOrderPublicId(expectedOrderId);
       const expectedOrderPublicId = String(expectedOrder?.public_id || "").trim();
       const actualOrderPublicId = String(basket.public_id || "").trim();
       const mismatchMessage = expectedOrderPublicId
         ? `Скан относится к ${actualOrderPublicId || "другому заказу"}, а выбран ${expectedOrderPublicId}. Завершите выбранный заказ или переключите его в выдаче.`
         : "Скан относится к другому заказу. Сначала переключите выбранный заказ в выдаче.";
 
-      insertScanEvent(orderId, basket.id, station, actor, "error", mismatchMessage, timestamp);
+      await insertScanEvent(orderId, basket.id, station, actor, "error", mismatchMessage, timestamp);
 
       return {
         status: 409,
@@ -919,7 +919,7 @@ function createWorkflowService(options) {
     }
 
     if (basket.status !== basket.station) {
-      insertScanEvent(
+      await insertScanEvent(
         orderId,
         basket.id,
         station,
@@ -939,9 +939,9 @@ function createWorkflowService(options) {
     }
 
     if (station === "qc" && basket.basket_kind !== "rework") {
-      const pendingRequests = listPendingReworkRequestsByBasketId(basket.id);
+      const pendingRequests = await listPendingReworkRequestsByBasketId(basket.id);
       if (pendingRequests.length) {
-        insertScanEvent(
+        await insertScanEvent(
           orderId,
           basket.id,
           station,
@@ -962,7 +962,7 @@ function createWorkflowService(options) {
     }
 
     if (basket.station !== station) {
-      insertScanEvent(orderId, basket.id, station, actor, "error", `Корзина относится к станции ${getStationLabel(basket.station)}.`, timestamp);
+      await insertScanEvent(orderId, basket.id, station, actor, "error", `Корзина относится к станции ${getStationLabel(basket.station)}.`, timestamp);
 
       return {
         status: 409,
@@ -974,9 +974,9 @@ function createWorkflowService(options) {
       // Pickup assembly is allowed to start as baskets arrive one by one, even when
       // the overall order status still reflects an earlier station. Hard pickup
       // status is enforced later for placement and handover confirmation.
-      const pickupInvariant = validatePickupInvariantState(orderId);
+      const pickupInvariant = await validatePickupInvariantState(orderId);
       if (!pickupInvariant.ok) {
-        insertScanEvent(orderId, basket.id, station, actor, "error", pickupInvariant.error, timestamp);
+        await insertScanEvent(orderId, basket.id, station, actor, "error", pickupInvariant.error, timestamp);
 
         return {
           status: pickupInvariant.status,
@@ -987,11 +987,11 @@ function createWorkflowService(options) {
         };
       }
 
-      const pickupOrder = workflowRepository.getPickupScanOrderState(orderId);
-      const handoverConfirmed = workflowRepository.hasPickupHandoverConfirmation(orderId);
+      const pickupOrder = await workflowRepository.getPickupScanOrderState(orderId);
+      const handoverConfirmed = await workflowRepository.hasPickupHandoverConfirmation(orderId);
       if (!pickupOrder || handoverConfirmed) {
         const blockedMessage = "Выдача по заказу уже подтверждена. Обновите экран.";
-        insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
+        await insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
 
         return {
           status: 409,
@@ -1003,7 +1003,7 @@ function createWorkflowService(options) {
       }
       if (Boolean(pickupOrder.ready_for_pickup)) {
         const blockedMessage = "Заказ уже размещен и ожидает выдачи.";
-        insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
+        await insertScanEvent(orderId, basket.id, station, actor, "error", blockedMessage, timestamp);
         return {
           status: 409,
           payload: {
@@ -1013,9 +1013,9 @@ function createWorkflowService(options) {
         };
       }
 
-      const alreadyScanned = workflowRepository.hasBasketPickupOkScan({ orderId, basketId: basket.id });
+      const alreadyScanned = await workflowRepository.hasBasketPickupOkScan({ orderId, basketId: basket.id });
       if (alreadyScanned) {
-        const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
+        const pickupSync = await syncPickupAssemblyFlags(orderId, timestamp);
         const pickupProgress = pickupSync.progress;
         const message = pickupSync.readyToPlace
           ? "Эта корзина уже принята. Заказ готов к размещению."
@@ -1026,7 +1026,7 @@ function createWorkflowService(options) {
           payload: {
             ok: true,
             message,
-            order: getOrderDetails(orderId),
+            order: await getOrderDetails(orderId),
             basket: {
               id: basket.id,
               basket_code: basket.basket_code,
@@ -1038,9 +1038,9 @@ function createWorkflowService(options) {
         };
       }
 
-      insertScanEvent(orderId, basket.id, station, actor, "ok", "BIN принят в сборку заказа на выдачу.", timestamp);
+      await insertScanEvent(orderId, basket.id, station, actor, "ok", "BIN принят в сборку заказа на выдачу.", timestamp);
 
-      const pickupSync = syncPickupAssemblyFlags(orderId, timestamp);
+      const pickupSync = await syncPickupAssemblyFlags(orderId, timestamp);
       const pickupProgress = pickupSync.progress;
       const message = pickupSync.readyToPlace
         ? "Комплект собран. Перейдите в режим «Размещение»."
@@ -1051,7 +1051,7 @@ function createWorkflowService(options) {
         payload: {
           ok: true,
           message,
-          order: getOrderDetails(orderId),
+          order: await getOrderDetails(orderId),
           basket: {
             id: basket.id,
             basket_code: basket.basket_code,
@@ -1064,11 +1064,11 @@ function createWorkflowService(options) {
     }
 
     if (station === reworkStation) {
-      workflowRepository.moveBasketToStation({ basketId: basket.id, station: "qc", timestamp });
+      await workflowRepository.moveBasketToStation({ basketId: basket.id, station: "qc", timestamp });
 
-      refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
+      await refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-      insertScanEvent(
+      await insertScanEvent(
         orderId,
         basket.id,
         station,
@@ -1083,7 +1083,7 @@ function createWorkflowService(options) {
         payload: {
           ok: true,
           message: `Корзина доработана и возвращена на станцию ${getStationLabel("qc")}.`,
-          order: getOrderDetails(orderId),
+          order: await getOrderDetails(orderId),
           basket: getBasketPayload({
             ...basket,
             station: "qc",
@@ -1094,7 +1094,7 @@ function createWorkflowService(options) {
     }
 
     if (station === "sorting") {
-      insertScanEvent(
+      await insertScanEvent(
         orderId,
         basket.id,
         station,
@@ -1119,18 +1119,18 @@ function createWorkflowService(options) {
     }
 
     const nextStation = productionFlow[currentIndex + 1];
-    workflowRepository.moveBasketToStation({ basketId: basket.id, station: nextStation, timestamp });
+    await workflowRepository.moveBasketToStation({ basketId: basket.id, station: nextStation, timestamp });
 
-    refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
+    await refreshOrderStatusFromBaskets(orderId, basket.cleancloud_order_id, timestamp);
 
-    insertScanEvent(orderId, basket.id, station, actor, "ok", `Basket moved to ${getStationLabel(nextStation)} station.`, timestamp);
+    await insertScanEvent(orderId, basket.id, station, actor, "ok", `Basket moved to ${getStationLabel(nextStation)} station.`, timestamp);
 
     return {
       status: 200,
       payload: {
         ok: true,
         message: `Basket moved to ${getStationLabel(nextStation)} station.`,
-        order: getOrderDetails(orderId),
+        order: await getOrderDetails(orderId),
         basket: getBasketPayload({
           ...basket,
           station: nextStation,
@@ -1140,8 +1140,8 @@ function createWorkflowService(options) {
     };
   }
 
-  function releaseOrderFromHold(orderId, actor) {
-    const order = workflowRepository.findHoldOrderById(orderId);
+  async function releaseOrderFromHold(orderId, actor) {
+    const order = await workflowRepository.findHoldOrderById(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
@@ -1149,26 +1149,26 @@ function createWorkflowService(options) {
       return { error: "Заказ не находится в HOLD", status: 400 };
     }
 
-    const basketCount = workflowRepository.countBasketsByOrder(orderId);
+    const basketCount = await workflowRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
       return { error: "У заказа нет корзин для возврата в работу", status: 400 };
     }
 
     const timestamp = nowIso();
-    workflowRepository.moveHoldBasketsToWashing({ orderId, holdStation, timestamp });
-    workflowRepository.releaseHoldOrderToWashing({ orderId, timestamp });
-    insertScanEvent(orderId, null, "overview", actor, "ok", "HOLD снят менеджером. Заказ возвращён на стирку.", timestamp);
+    await workflowRepository.moveHoldBasketsToWashing({ orderId, holdStation, timestamp });
+    await workflowRepository.releaseHoldOrderToWashing({ orderId, timestamp });
+    await insertScanEvent(orderId, null, "overview", actor, "ok", "HOLD снят менеджером. Заказ возвращён на стирку.", timestamp);
 
     queueSync(orderId, "cleancloud.status", {
       orderId: order.cleancloud_order_id,
       status: "В работе"
     });
 
-    return { ok: true, order: getOrderDetails(orderId) };
+    return { ok: true, order: await getOrderDetails(orderId) };
   }
 
-  function placeOrderForPickup(orderId, containerCountRaw, placementsRaw, actor) {
-    const order = workflowRepository.findPickupPlacementOrder(orderId);
+  async function placeOrderForPickup(orderId, containerCountRaw, placementsRaw, actor) {
+    const order = await workflowRepository.findPickupPlacementOrder(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
@@ -1182,7 +1182,7 @@ function createWorkflowService(options) {
       return { error: "Заказ еще не собран полностью. Сначала завершите сборку BIN.", status: 409 };
     }
 
-    const pickupInvariant = validatePickupInvariantState(orderId, {
+    const pickupInvariant = await validatePickupInvariantState(orderId, {
       requirePickupStatus: true,
       requireReadyToPlace: true
     });
@@ -1190,7 +1190,7 @@ function createWorkflowService(options) {
       return { error: pickupInvariant.error, status: pickupInvariant.status };
     }
 
-    releasePickupAssemblyBins(orderId, nowIso());
+    await releasePickupAssemblyBins(orderId, nowIso());
 
     const containerCount = Number(containerCountRaw);
     if (!Number.isInteger(containerCount) || (containerCount !== 1 && containerCount !== 2)) {
@@ -1244,18 +1244,18 @@ function createWorkflowService(options) {
     }
 
     for (const placement of placements) {
-      const catalogBin = workflowRepository.findBinCatalogEntry(placement.binQrCode);
+      const catalogBin = await workflowRepository.findBinCatalogEntry(placement.binQrCode);
       if (!catalogBin) {
         return { error: `BIN ${placement.binQrCode} отсутствует в пуле пустых корзин.`, status: 400 };
       }
-      const basketInUse = workflowRepository.findActiveBasketByQrForPickupPlacement(placement.binQrCode);
+      const basketInUse = await workflowRepository.findActiveBasketByQrForPickupPlacement(placement.binQrCode);
       if (basketInUse) {
         return {
           error: `BIN ${placement.binQrCode} занят заказом ${basketInUse.public_id} (${getStationLabel(basketInUse.station)}).`,
           status: 409
         };
       }
-      const activeBinPlacement = workflowRepository.findActivePickupPlacementByBin(placement.binQrCode);
+      const activeBinPlacement = await workflowRepository.findActivePickupPlacementByBin(placement.binQrCode);
       if (activeBinPlacement) {
         return {
           error: `BIN ${placement.binQrCode} уже закреплен за заказом ${activeBinPlacement.public_id}.`,
@@ -1263,11 +1263,11 @@ function createWorkflowService(options) {
         };
       }
 
-      const catalogLocation = workflowRepository.findPickupLocationCatalogEntry(placement.locationQrCode);
+      const catalogLocation = await workflowRepository.findPickupLocationCatalogEntry(placement.locationQrCode);
       if (!catalogLocation) {
         return { error: `LOC ${placement.locationQrCode} не найдена в каталоге.`, status: 400 };
       }
-      const activeLocationPlacement = workflowRepository.findActivePickupPlacementByLocation(placement.locationQrCode);
+      const activeLocationPlacement = await workflowRepository.findActivePickupPlacementByLocation(placement.locationQrCode);
       if (activeLocationPlacement) {
         return {
           error: `LOC ${placement.locationQrCode} уже занята заказом ${activeLocationPlacement.public_id}.`,
@@ -1303,7 +1303,7 @@ function createWorkflowService(options) {
     return {
       ok: true,
       message: "Размещение сохранено: BIN и LOC закреплены за заказом.",
-      order: getOrderDetails(orderId),
+      order: await getOrderDetails(orderId),
       placements: placements.map((placement) => ({
         slot_index: placement.slotIndex,
         bin_qr_code: placement.binQrCode,
@@ -1312,22 +1312,22 @@ function createWorkflowService(options) {
     };
   }
 
-  function completePickup(orderId, actor) {
-    const order = workflowRepository.findPickupCompletionOrder(orderId);
+  async function completePickup(orderId, actor) {
+    const order = await workflowRepository.findPickupCompletionOrder(orderId);
     if (!order) {
       return { error: "Заказ не найден", status: 404 };
     }
     if (order.status !== "pickup" || !order.ready_for_pickup) {
       return { error: "Заказ не готов к подтверждению выдачи", status: 400 };
     }
-    const pickupInvariant = validatePickupInvariantState(orderId, {
+    const pickupInvariant = await validatePickupInvariantState(orderId, {
       requirePickupStatus: true,
       requireReadyForPickup: true
     });
     if (!pickupInvariant.ok) {
       return { error: pickupInvariant.error, status: pickupInvariant.status };
     }
-    const progress = getPickupScanProgress(orderId);
+    const progress = await getPickupScanProgress(orderId);
     if (!progress.complete) {
       return {
         error: `Сначала отсканируйте все корзины (${progress.scannedBaskets}/${progress.totalBaskets})`,
@@ -1336,7 +1336,7 @@ function createWorkflowService(options) {
     }
 
     const timestamp = nowIso();
-    const orderBaskets = workflowRepository.listOrderBasketsForArchive(orderId);
+    const orderBaskets = await workflowRepository.listOrderBasketsForArchive(orderId);
 
     try {
       runImmediateTransaction(db, () => {
@@ -1362,7 +1362,7 @@ function createWorkflowService(options) {
       return { error: error?.message || "Не удалось подтвердить выдачу.", status: 500 };
     }
 
-    return { ok: true, order: getOrderDetails(orderId) };
+    return { ok: true, order: await getOrderDetails(orderId) };
   }
 
   return {

@@ -1,9 +1,9 @@
 function createScanExportService(scanRepository) {
-  function getScanExportRows(orderId) {
+  async function getScanExportRows(orderId) {
     return scanRepository.listExportRows(orderId);
   }
 
-  function getRecentScansByStation(station, limit) {
+  async function getRecentScansByStation(station, limit) {
     return scanRepository.listRecentByStation(station, limit);
   }
 

@@ -1,6 +1,6 @@
 const { parseRequiredString } = require("../http/validation");
 
-function handleSecurityRoutes(req, res, url, ctx) {
+async function handleSecurityRoutes(req, res, url, ctx) {
   const {
     requireAuth,
     requireManager,
@@ -19,7 +19,7 @@ function handleSecurityRoutes(req, res, url, ctx) {
 
     json(res, 200, {
       total: limit,
-      rows: listSecurityEvents(limit, category || null)
+      rows: await listSecurityEvents(limit, category || null)
     });
     return true;
   }

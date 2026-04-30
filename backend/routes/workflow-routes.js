@@ -81,7 +81,7 @@ async function readSortingRequest(req, readJson, readMultipartForm) {
   return normalizeSortingRequestBody(payload, filesByField);
 }
 
-function handleWorkflowRoutes(req, res, url, ctx) {
+async function handleWorkflowRoutes(req, res, url, ctx) {
   const {
     readJson,
     readMultipartForm,
@@ -127,7 +127,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
 
     readJson(req)
       .then(async (body) => {
-        const result = approveReworkRequest(requestId, session.username, body.note || body.decisionNote || "");
+        const result = await approveReworkRequest(requestId, session.username, body.note || body.decisionNote || "");
         if (result.error) {
           json(res, result.status, { error: result.error });
           return;
@@ -152,7 +152,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
 
     readJson(req)
       .then(async (body) => {
-        const result = declineReworkRequest(requestId, session.username, body.note || body.decisionNote || "");
+        const result = await declineReworkRequest(requestId, session.username, body.note || body.decisionNote || "");
         if (result.error) {
           json(res, result.status, { error: result.error });
           return;
@@ -175,7 +175,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
       return true;
     }
 
-    const result = releaseOrderFromHold(orderId, session.username);
+    const result = await releaseOrderFromHold(orderId, session.username);
     if (result.error) {
       json(res, result.status, { error: result.error });
       return true;
@@ -190,7 +190,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!session) return true;
     if (!requireStationAccess(session, "pickup", res)) return true;
 
-    const snapshot = getPickupWorkbenchSnapshot();
+    const snapshot = await getPickupWorkbenchSnapshot();
     json(res, 200, {
       assemblyOrders: Array.isArray(snapshot?.assemblyOrders) ? snapshot.assemblyOrders : [],
       readyToPlaceOrders: Array.isArray(snapshot?.readyToPlaceOrders) ? snapshot.readyToPlaceOrders : [],
@@ -222,9 +222,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
           const result = await runIdempotentOperation(req, {
             routeKey: `pickup.place-order:${orderId}`,
             actor: session.username,
-            execute: () => Promise.resolve(
-              placeOrderForPickup(orderId, containerCount, placements, session.username)
-            )
+            execute: () => placeOrderForPickup(orderId, containerCount, placements, session.username)
           });
           if (result.error) {
             json(res, result.status || 400, { error: result.error });
@@ -259,7 +257,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
           const result = await runIdempotentOperation(req, {
             routeKey: `sorting.create-baskets:${orderId}`,
             actor: session.username,
-            execute: () => Promise.resolve(createBaskets(orderId, { types, baskets }, session.username))
+            execute: () => createBaskets(orderId, { types, baskets }, session.username)
           });
           if (result.error) {
             json(res, result.status, { error: result.error });
@@ -293,7 +291,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
           const result = await runIdempotentOperation(req, {
             routeKey: `sorting.update-baskets:${orderId}`,
             actor: session.username,
-            execute: () => Promise.resolve(updateSortedBaskets(orderId, { types, baskets }, session.username))
+            execute: () => updateSortedBaskets(orderId, { types, baskets }, session.username)
           });
           if (result.error) {
             json(res, result.status, { error: result.error });
@@ -314,14 +312,14 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!requireStationAccess(session, "sorting", res)) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const orderId = parsePositiveInt(body.orderId);
         if (!orderId) {
           json(res, 400, { error: "Invalid order id" });
           return;
         }
 
-        const result = returnSortedOrderToSorting(orderId, session.username);
+        const result = await returnSortedOrderToSorting(orderId, session.username);
         if (result.error) {
           json(res, result.status, { error: result.error });
           return;
@@ -343,7 +341,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     }
     if (!requireStationAccess(session, station, res)) return true;
 
-    const result = listMachineWorkbench(station);
+    const result = await listMachineWorkbench(station);
     if (result.error) {
       json(res, result.status || 400, { error: result.error });
       return true;
@@ -404,7 +402,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!session) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const station = parseStation(stationLabels, body.station);
         if (!station || (station !== "washing" && station !== "drying")) {
           json(res, 400, { error: "Set station to washing or drying." });
@@ -418,7 +416,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
           return;
         }
 
-        const result = validateMachineLoadBasket(station, basketQr);
+        const result = await validateMachineLoadBasket(station, basketQr);
         if (result.error) {
           json(res, result.status || 400, { error: result.error });
           return;
@@ -449,7 +447,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
         }
         if (!requireStationAccess(session, station, res)) return;
 
-        const result = cancelMachineLoad(loadId, session.username, { expectedStation: station });
+        const result = await cancelMachineLoad(loadId, session.username, { expectedStation: station });
         if (result.error) {
           json(res, result.status || 400, { error: result.error });
           return;
@@ -512,7 +510,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!session) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const station = parseStation(stationLabels, body.station);
         if (!station) {
           json(res, 400, { error: "Unknown station" });
@@ -527,7 +525,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
         }
         const expectedOrderId = parsePositiveInt(body.expectedOrderId || body.expected_order_id);
 
-        const result = scanBasket(station, qrCode, session.username, {
+        const result = await scanBasket(station, qrCode, session.username, {
           expectedOrderId: expectedOrderId || null
         });
         json(res, result.status, result.payload);
@@ -542,13 +540,13 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!requireStationAccess(session, "qc", res)) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const qrCode = parseRequiredString(body.qrCode, { minLength: 3, maxLength: 128 });
         if (!qrCode) {
           json(res, 400, { error: "QR code is required." });
           return;
         }
-        const result = rejectBasketFromQc(qrCode, session.username, body.reason);
+        const result = await rejectBasketFromQc(qrCode, session.username, body.reason);
         json(res, result.status, result.payload);
       })
       .catch((error) => json(res, 400, { error: error.message }));
@@ -560,7 +558,7 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!session) return true;
     if (!requireStationAccess(session, "qc", res)) return true;
 
-    json(res, 200, { tasks: listPendingQcTransferTasks() });
+    json(res, 200, { tasks: await listPendingQcTransferTasks() });
     return true;
   }
 
@@ -577,12 +575,12 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     }
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const sourceQrCodeRaw = parseRequiredString(body.sourceQrCode || body.source_qr_code, { minLength: 3, maxLength: 128 });
 
         const targetQrCodeRaw = parseRequiredString(body.targetQrCode || body.target_qr_code, { minLength: 3, maxLength: 128 });
 
-        const result = confirmQcTransferTask(requestId, session.username, {
+        const result = await confirmQcTransferTask(requestId, session.username, {
           sourceQrCode: sourceQrCodeRaw || "",
           targetQrCode: targetQrCodeRaw || "",
           handoffNote: body.note || body.handoffNote || ""
@@ -603,13 +601,13 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!requireStationAccess(session, "qc", res)) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const qrCode = parseRequiredString(body.qrCode, { minLength: 3, maxLength: 128 });
         if (!qrCode) {
           json(res, 400, { error: "QR code is required." });
           return;
         }
-        const result = createReworkRequestFromQc(qrCode, session.username, {
+        const result = await createReworkRequestFromQc(qrCode, session.username, {
           reason: body.reason,
           itemCategory: body.itemCategory || body.item_category,
           itemLabel: body.itemLabel || body.item_label,
@@ -629,13 +627,13 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!requireStationAccess(session, "qc", res)) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const qrCode = parseRequiredString(body.qrCode, { minLength: 3, maxLength: 128 });
         if (!qrCode) {
           json(res, 400, { error: "QR code is required." });
           return;
         }
-        const result = inspectQcBasket(qrCode);
+        const result = await inspectQcBasket(qrCode);
         json(res, result.status, result.payload);
       })
       .catch((error) => json(res, 400, { error: error.message }));
@@ -648,14 +646,14 @@ function handleWorkflowRoutes(req, res, url, ctx) {
     if (!requireManager(session, res)) return true;
 
     readJson(req)
-      .then((body) => {
+      .then(async (body) => {
         const orderId = parsePositiveInt(body.orderId);
         if (!orderId) {
           json(res, 400, { error: "Invalid order id" });
           return;
         }
 
-        const result = completePickup(orderId, session.username);
+        const result = await completePickup(orderId, session.username);
         if (result.error) {
           json(res, result.status, { error: result.error });
           return;
