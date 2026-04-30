@@ -18,6 +18,7 @@
     "backup:db": "node scripts/backup-db.js",
     "restore:db": "node scripts/restore-db.js --latest",
     "db:doctor": "node scripts/db-doctor.js",
+    "db:postgres:schema": "node scripts/apply-postgres-schema.js",
     "rotate:logs": "node scripts/rotate-logs.js",
     "monitor:health": "node scripts/monitor-health.js",
     "seed:scenario": "node scripts/seed-scenarios.js",
