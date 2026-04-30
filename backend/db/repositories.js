@@ -11,30 +11,91 @@ const { createSqliteScanRepository } = require("./sqlite-scan-repository");
 const { createSqliteSortingRepository } = require("./sqlite-sorting-repository");
 const { createSqliteSystemRepository } = require("./sqlite-system-repository");
 const { createSqliteWorkflowRepository } = require("./sqlite-workflow-repository");
+const { createPostgresCleanCloudRepository } = require("./postgres-cleancloud-repository");
+const { createPostgresCoreRepository } = require("./postgres-core-repository");
+const { createPostgresDemoSeedRepository } = require("./postgres-demo-seed-repository");
+const { createPostgresIdempotencyRepository } = require("./postgres-idempotency-repository");
+const { createPostgresOrderQueryRepository } = require("./postgres-order-query-repository");
+const { createPostgresPickupWorkbenchRepository } = require("./postgres-pickup-workbench-repository");
+const { createPostgresScanRepository } = require("./postgres-scan-repository");
+const { createPostgresSecurityEventRepository } = require("./postgres-security-event-repository");
+const { createPostgresSystemRepository } = require("./postgres-system-repository");
+const { createPostgresUserRepository } = require("./postgres-user-repository");
 
-function createRepositories(options = {}) {
-  const client = String(options.client || "sqlite").trim().toLowerCase();
-  if (client !== "sqlite") {
-    throw new Error(`Repository factory does not support database client yet: ${client}`);
-  }
+const POSTGRES_READY_REPOSITORIES = [
+  "cleanCloudRepository",
+  "coreRepository",
+  "demoSeedRepository",
+  "idempotencyRepository",
+  "orderQueryRepository",
+  "pickupWorkbenchRepository",
+  "scanRepository",
+  "securityEventRepository",
+  "systemRepository",
+  "userRepository"
+];
 
+const POSTGRES_BLOCKED_REPOSITORIES = [
+  "reworkRepository",
+  "sortingRepository",
+  "workflowRepository"
+];
+
+function createSqliteRepositories(db) {
   return {
-    cleanCloudRepository: createSqliteCleanCloudRepository(options.db),
-    coreRepository: createSqliteCoreRepository(options.db),
-    demoSeedRepository: createSqliteDemoSeedRepository(options.db),
-    idempotencyRepository: createSqliteIdempotencyRepository(options.db),
-    orderQueryRepository: createSqliteOrderQueryRepository(options.db),
-    pickupWorkbenchRepository: createSqlitePickupWorkbenchRepository(options.db),
-    reworkRepository: createSqliteReworkRepository(options.db),
-    scanRepository: createSqliteScanRepository(options.db),
-    securityEventRepository: createSqliteSecurityEventRepository(options.db),
-    sortingRepository: createSqliteSortingRepository(options.db),
-    systemRepository: createSqliteSystemRepository(options.db),
-    userRepository: createSqliteUserRepository(options.db),
-    workflowRepository: createSqliteWorkflowRepository(options.db)
+    cleanCloudRepository: createSqliteCleanCloudRepository(db),
+    coreRepository: createSqliteCoreRepository(db),
+    demoSeedRepository: createSqliteDemoSeedRepository(db),
+    idempotencyRepository: createSqliteIdempotencyRepository(db),
+    orderQueryRepository: createSqliteOrderQueryRepository(db),
+    pickupWorkbenchRepository: createSqlitePickupWorkbenchRepository(db),
+    reworkRepository: createSqliteReworkRepository(db),
+    scanRepository: createSqliteScanRepository(db),
+    securityEventRepository: createSqliteSecurityEventRepository(db),
+    sortingRepository: createSqliteSortingRepository(db),
+    systemRepository: createSqliteSystemRepository(db),
+    userRepository: createSqliteUserRepository(db),
+    workflowRepository: createSqliteWorkflowRepository(db)
   };
 }
 
+function createPostgresRepositories(options = {}) {
+  if (!options.allowPartialPostgres) {
+    throw new Error(
+      `PostgreSQL repository factory is incomplete. Missing repositories: ${POSTGRES_BLOCKED_REPOSITORIES.join(", ")}.`
+    );
+  }
+
+  return {
+    cleanCloudRepository: createPostgresCleanCloudRepository(options.db),
+    coreRepository: createPostgresCoreRepository(options.db),
+    demoSeedRepository: createPostgresDemoSeedRepository(options.db),
+    idempotencyRepository: createPostgresIdempotencyRepository(options.db),
+    orderQueryRepository: createPostgresOrderQueryRepository(options.db),
+    pickupWorkbenchRepository: createPostgresPickupWorkbenchRepository(options.db),
+    scanRepository: createPostgresScanRepository(options.db),
+    securityEventRepository: createPostgresSecurityEventRepository(options.db),
+    systemRepository: createPostgresSystemRepository(options.db),
+    userRepository: createPostgresUserRepository(options.db)
+  };
+}
+
+function createRepositories(options = {}) {
+  const client = String(options.client || "sqlite").trim().toLowerCase();
+  if (client === "sqlite") {
+    return createSqliteRepositories(options.db);
+  }
+  if (client === "postgres") {
+    return createPostgresRepositories(options);
+  }
+
+  throw new Error(`Repository factory does not support database client yet: ${client}`);
+}
+
 module.exports = {
-  createRepositories
+  POSTGRES_BLOCKED_REPOSITORIES,
+  POSTGRES_READY_REPOSITORIES,
+  createPostgresRepositories,
+  createRepositories,
+  createSqliteRepositories
 };

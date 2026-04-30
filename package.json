@@ -14,7 +14,7 @@
     "export:training:pdf": "node scripts/export-training-pdf.js",
     "export:training:ru:full": "node scripts/export-training-ru-full-pdf.js",
     "labels:baskets": "python scripts/generate_bin_qr_labels.py",
-    "test:all": "npm run audit:db-boundaries && npm run audit:db-schema && npm run test:sql-placeholders && npm run test:db-runtime && npm run test:db-transactions && npm run test:postgres-repositories && node scripts/test-all.js",
+    "test:all": "npm run audit:db-boundaries && npm run audit:db-schema && npm run test:sql-placeholders && npm run test:db-runtime && npm run test:db-transactions && npm run test:repository-factory && npm run test:postgres-repositories && node scripts/test-all.js",
     "backup:db": "node scripts/backup-db.js",
     "restore:db": "node scripts/restore-db.js --latest",
     "db:doctor": "node scripts/db-doctor.js",
@@ -29,6 +29,7 @@
     "test:db-runtime": "node scripts/test-db-runtime-config.js",
     "test:db-transactions": "node scripts/test-db-transactions.js",
     "test:postgres-repositories": "node scripts/test-postgres-repositories.js",
+    "test:repository-factory": "node scripts/test-repository-factory.js",
     "test:sql-placeholders": "node scripts/test-sql-placeholders.js",
     "ops:daily": "node scripts/backup-db.js --keep=21 && node scripts/rotate-logs.js --max-mb=10 --keep=7 && node scripts/monitor-health.js --max-failed=0 --max-pending=20 --max-processing=10"
   },
