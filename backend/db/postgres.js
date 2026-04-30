@@ -1,8 +1,4 @@
-const POSTGRES_NOT_READY_MESSAGE = [
-  "GREENLAB_DB_CLIENT=postgres is reserved for the PostgreSQL migration branch,",
-  "but the application still uses the synchronous SQLite query contract.",
-  "Keep GREENLAB_DB_CLIENT=sqlite until repository methods are migrated to an async PostgreSQL adapter."
-].join(" ");
+const { Pool } = require("pg");
 
 function normalizePostgresConnectionString(value) {
   const connectionString = String(value || "").trim();
@@ -47,12 +43,10 @@ function buildPostgresConfig(options = {}) {
 }
 
 function openPostgresDatabase(options = {}) {
-  buildPostgresConfig(options);
-  throw new Error(POSTGRES_NOT_READY_MESSAGE);
+  return new Pool(buildPostgresConfig(options));
 }
 
 module.exports = {
-  POSTGRES_NOT_READY_MESSAGE,
   buildPostgresConfig,
   normalizePostgresConnectionString,
   openPostgresDatabase

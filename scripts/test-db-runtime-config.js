@@ -1,6 +1,5 @@
 const assert = require("node:assert/strict");
 const {
-  POSTGRES_NOT_READY_MESSAGE,
   normalizeDatabaseClient,
   openDatabase
 } = require("../backend/db");
@@ -41,13 +40,15 @@ assert.deepEqual(
   }
 );
 
-assert.throws(
-  () => openPostgresDatabase({ connectionString: "postgres://localhost/greenlab" }),
-  new RegExp(POSTGRES_NOT_READY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-);
-assert.throws(
-  () => openDatabase({ client: "postgres", databaseUrl: "postgres://localhost/greenlab" }),
-  new RegExp(POSTGRES_NOT_READY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-);
+const postgresPool = openPostgresDatabase({ connectionString: "postgres://localhost/greenlab" });
+assert.equal(typeof postgresPool.query, "function");
+assert.equal(typeof postgresPool.connect, "function");
+assert.equal(typeof postgresPool.end, "function");
+postgresPool.end();
+
+const postgresRuntime = openDatabase({ client: "postgres", databaseUrl: "postgres://localhost/greenlab" });
+assert.equal(postgresRuntime.client, "postgres");
+assert.equal(typeof postgresRuntime.db.query, "function");
+postgresRuntime.db.end();
 
 console.log("DB runtime config tests: OK");

@@ -1,8 +1,5 @@
 const { openSqliteDatabase } = require("./sqlite");
-const {
-  POSTGRES_NOT_READY_MESSAGE,
-  openPostgresDatabase
-} = require("./postgres");
+const { openPostgresDatabase } = require("./postgres");
 
 function normalizeDatabaseClient(value) {
   const client = String(value || "sqlite").trim().toLowerCase();
@@ -32,7 +29,6 @@ function openDatabase(options = {}) {
 }
 
 module.exports = {
-  POSTGRES_NOT_READY_MESSAGE,
   normalizeDatabaseClient,
   openDatabase
 };
