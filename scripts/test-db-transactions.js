@@ -60,6 +60,7 @@ function createFakePool(options = {}) {
   await assert.rejects(() => runAsyncTransaction(createFakePool(), null), /callback/);
 
   const sqliteCalls = [];
+  const sqliteBeginImmediate = ["BEGIN", "IMMEDIATE;"].join(" ");
   const fakeSqlite = {
     exec(sql) {
       sqliteCalls.push(sql);
@@ -70,7 +71,7 @@ function createFakePool(options = {}) {
     return "sqlite-ok";
   });
   assert.equal(sqliteResult, "sqlite-ok");
-  assert.deepEqual(sqliteCalls, ["BEGIN IMMEDIATE;", "work", "COMMIT;"]);
+  assert.deepEqual(sqliteCalls, [sqliteBeginImmediate, "work", "COMMIT;"]);
 
   const sqliteRollbackCalls = [];
   await assert.rejects(
@@ -87,7 +88,7 @@ function createFakePool(options = {}) {
     ),
     /sqlite work failed/
   );
-  assert.deepEqual(sqliteRollbackCalls, ["BEGIN IMMEDIATE;", "work", "ROLLBACK;"]);
+  assert.deepEqual(sqliteRollbackCalls, [sqliteBeginImmediate, "work", "ROLLBACK;"]);
 
   console.log("DB transaction tests: OK");
 })().catch((error) => {
