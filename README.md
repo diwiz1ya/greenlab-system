@@ -53,6 +53,14 @@ npm start
 - `GREENLAB_TRUST_PROXY` - доверять `x-forwarded-for` для IP/рейта (`false` по умолчанию)
 - `GREENLAB_DEMO_RESET_ON_BOOT` - сбрасывать демо-данные на старте (`false` по умолчанию)
 
+## Интеграция с POS
+
+Техническое описание для POS-команды:
+
+- [docs/POS_INTEGRATION_BRIEF.md](docs/POS_INTEGRATION_BRIEF.md)
+
+В документе описаны архитектура, станции, PostgreSQL, основные таблицы, текущий API и рекомендуемый контракт для подключения POS через отдельные integration endpoints и webhooks.
+
 ## База данных
 
 Система поддерживает два режима БД:
