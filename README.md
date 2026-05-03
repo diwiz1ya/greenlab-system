@@ -1,20 +1,21 @@
-# Green Lab Demo MVP
+# Green Lab
 
-Локальное демо-приложение Green Lab для показа заказчику.
+Система учета корзин и производственного workflow Green Lab: сортировка, стирка, сушка, QC/rework, глажка, выдача, менеджерский контроль и синхронизация с CleanCloud.
 
 Что уже реализовано:
 - вход по ролям и доступ по станциям (RBAC)
-- интерфейс по ролям: сортировка / скан-пост / выдача / менеджер
-- сортировка с выбором количества корзин и опциональными названиями
-- поток сканирования: стирка -> QC -> сушка -> глажка -> выдача
-- kiosk-режим скан-поста (сканер как клавиатура, Enter, явный статус OK/Ошибка + звуковой сигнал)
-- подтверждение выдачи в системе, финальное закрытие заказа только в CleanCloud
+- интерфейс по ролям: sorting / washing / drying / QC / rework / ironing / pickup / manager
+- сортировка с корзинами, составом вещей и фото
+- поток сканирования: sorting -> washing -> drying -> QC/rework -> ironing -> pickup
+- машинные циклы для washing/drying
+- QC/rework-сценарии с согласованием клиента и HOLD
+- pickup assembly и placement по BIN/LOC QR
 - детали заказа и лог сканов
-- локальная база SQLite
+- SQLite для локального demo-режима
+- PostgreSQL для staging/production-режима
 - очередь синхронизации CleanCloud (с retry/fail и ручным запуском)
 - прием webhook CleanCloud с дедупликацией событий
 - экспорт лога сканов (JSON/CSV)
-- простой режим оператора для станций сканирования
 
 ## Быстрый запуск
 
@@ -37,6 +38,7 @@ npm start
 - `drying` / `demo123`
 - `ironing` / `demo123`
 - `pickup` / `demo123`
+- `rework` / `demo123`
 - `manager` / `demo123`
 
 ## Интеграция CleanCloud (опционально)
@@ -53,13 +55,29 @@ npm start
 
 ## База данных
 
-Текущий runtime использует SQLite. Это нормальный режим для демо, локального тестирования и MVP:
+Система поддерживает два режима БД:
 
 - `GREENLAB_DB_CLIENT=sqlite` - значение по умолчанию
 - `GREENLAB_DB_PATH=...` - путь к SQLite-файлу, по умолчанию `data/greenlab-demo.sqlite`
+- `GREENLAB_DB_CLIENT=postgres` - PostgreSQL-режим
+- `GREENLAB_DATABASE_URL=postgres://...` - строка подключения PostgreSQL
 - `npm run db:doctor` - быстрая проверка выбранного режима БД
 
-PostgreSQL выделен как следующий production-шаг, но его нельзя включить одной переменной без переписывания слоя запросов: текущие сервисы используют синхронный контракт `db.prepare(...).get/all/run`, а PostgreSQL-драйвер в Node работает асинхронно. Поэтому `GREENLAB_DB_CLIENT=postgres` сейчас останавливает запуск с понятным сообщением, чтобы случайно не получить полурабочую боевую конфигурацию.
+SQLite удобен для локального demo. Для staging/production рекомендуется PostgreSQL.
+
+Применить PostgreSQL-схему:
+
+```bash
+GREENLAB_DATABASE_URL=postgres://user:password@host:5432/greenlab npm run db:postgres:schema
+```
+
+Запуск в PostgreSQL-режиме:
+
+```bash
+GREENLAB_DB_CLIENT=postgres GREENLAB_DATABASE_URL=postgres://user:password@host:5432/greenlab npm start
+```
+
+PostgreSQL live-regression был проверен на полном workflow: sorting -> washing -> drying -> QC/rework -> ironing -> pickup.
 
 Новые API для менеджера:
 
