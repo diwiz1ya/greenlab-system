@@ -180,6 +180,42 @@ function createSqliteWorkflowRepository(db) {
     INSERT INTO scan_events (order_id, basket_id, station, actor, result, message, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+  const findActiveIroningSessionByBasketIdStmt = db.prepare(`
+    SELECT id, order_id, basket_id, status, started_by, started_at, completed_by, completed_at
+    FROM ironing_sessions
+    WHERE basket_id = ?
+      AND status = 'active'
+    ORDER BY started_at DESC, id DESC
+    LIMIT 1
+  `);
+  const insertIroningSessionStmt = db.prepare(`
+    INSERT INTO ironing_sessions (
+      order_id, basket_id, status, started_by, started_at, created_at, updated_at
+    ) VALUES (?, ?, 'active', ?, ?, ?, ?)
+  `);
+  const completeIroningSessionStmt = db.prepare(`
+    UPDATE ironing_sessions
+    SET status = 'completed', completed_by = ?, completed_at = ?, updated_at = ?
+    WHERE id = ?
+      AND status = 'active'
+  `);
+  const listActiveIroningSessionsStmt = db.prepare(`
+    SELECT
+      s.id,
+      s.order_id,
+      s.basket_id,
+      s.started_by,
+      s.started_at,
+      b.basket_code,
+      b.qr_code,
+      b.basket_type,
+      o.public_id
+    FROM ironing_sessions s
+    JOIN baskets b ON b.id = s.basket_id
+    JOIN orders o ON o.id = s.order_id
+    WHERE s.status = 'active'
+    ORDER BY s.started_at ASC, s.id ASC
+  `);
   const getMachineLoadByIdStmt = db.prepare(`
     SELECT
       ml.id,
@@ -347,18 +383,11 @@ function createSqliteWorkflowRepository(db) {
     LIMIT 1
   `);
   const findActiveBasketByQrForPickupPlacementStmt = db.prepare(`
-    SELECT b.id, b.station, o.public_id
+    SELECT b.id, b.order_id, b.station, b.status, o.public_id
     FROM baskets b
     JOIN orders o ON o.id = b.order_id
     WHERE b.qr_code = ?
       AND b.status != 'archived'
-      AND NOT (
-        o.status = 'pickup'
-        AND (
-          COALESCE(o.ready_to_place, 0) = 1
-          OR COALESCE(o.ready_for_pickup, 0) = 1
-        )
-      )
     LIMIT 1
   `);
   const releaseActivePickupOrderPlacementsStmt = db.prepare(`
@@ -374,7 +403,7 @@ function createSqliteWorkflowRepository(db) {
   `);
   const markOrderPlacedForPickupStmt = db.prepare(`
     UPDATE orders
-    SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = ?
+    SET ready_to_place = ?, ready_for_pickup = ?, cleancloud_status = ?, updated_at = ?
     WHERE id = ?
   `);
   const findPickupCompletionOrderStmt = db.prepare("SELECT * FROM orders WHERE id = ?");
@@ -415,6 +444,10 @@ function createSqliteWorkflowRepository(db) {
     insertMachineLoad: ({ machineId, station, actor, timestamp }) => insertMachineLoadStmt.run(machineId, station, actor, timestamp, timestamp, timestamp),
     insertMachineLoadBasket: ({ loadId, basketId, orderId, timestamp }) => insertMachineLoadBasketStmt.run(loadId, basketId, orderId, timestamp),
     insertScanEvent: ({ orderId, basketId, station, actor, result = "ok", message, timestamp }) => insertScanEventStmt.run(orderId, basketId, station, actor, result, message, timestamp),
+    findActiveIroningSessionByBasketId: (basketId) => findActiveIroningSessionByBasketIdStmt.get(basketId),
+    insertIroningSession: ({ orderId, basketId, actor, timestamp }) => insertIroningSessionStmt.run(orderId, basketId, actor, timestamp, timestamp, timestamp),
+    completeIroningSession: ({ sessionId, actor, timestamp }) => completeIroningSessionStmt.run(actor, timestamp, timestamp, sessionId),
+    listActiveIroningSessions: () => listActiveIroningSessionsStmt.all(),
     getMachineLoadById: (loadId) => getMachineLoadByIdStmt.get(loadId),
     listPendingMachineLoadBaskets: (loadId) => listPendingMachineLoadBasketsStmt.all(loadId),
     findActiveBasketCatalogQr: (qrCode) => findActiveBasketCatalogQrStmt.get(qrCode),
@@ -444,7 +477,13 @@ function createSqliteWorkflowRepository(db) {
     insertPickupOrderPlacement: ({ orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp }) => (
       insertPickupOrderPlacementStmt.run(orderId, slotIndex, binQrCode, locationQrCode, actor, timestamp, timestamp, timestamp)
     ),
-    markOrderPlacedForPickup: ({ orderId, timestamp }) => markOrderPlacedForPickupStmt.run(timestamp, orderId),
+    markOrderPlacedForPickup: ({ orderId, timestamp, readyForPickup = true }) => markOrderPlacedForPickupStmt.run(
+      0,
+      readyForPickup ? 1 : 0,
+      readyForPickup ? "Готов к выдаче" : "Частично размещен на выдаче",
+      timestamp,
+      orderId
+    ),
     findPickupCompletionOrder: (orderId) => findPickupCompletionOrderStmt.get(orderId),
     listOrderBasketsForArchive: (orderId) => listOrderBasketsForArchiveStmt.all(orderId),
     markOrderPickedUp: ({ orderId, timestamp }) => markOrderPickedUpStmt.run(timestamp, orderId),

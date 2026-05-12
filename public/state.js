@@ -5,8 +5,7 @@ export function createPickupPlacementDraft() {
     orderId: null,
     containerCount: 1,
     placements: [
-      { binQr: "", locationQr: "" },
-      { binQr: "", locationQr: "" }
+      { locationQr: "" }
     ],
     feedback: null
   };
@@ -71,7 +70,7 @@ export const stationLabels = {
   qc: "Quality Control (QC)",
   rework: "Rework",
   ironing: "Ironing",
-  pickup: "Pickup"
+  pickup: "Dispatch"
 };
 
 export const stationDescriptions = {
@@ -81,8 +80,8 @@ export const stationDescriptions = {
   drying: "Drying station: scan-only before QC.",
   qc: "Quality check after drying and before ironing.",
   rework: "Rework after QC: scan returns basket back to QC.",
-  ironing: "Ironing station: scan-only after QC and before pickup.",
-  pickup: "Pickup assembly and storage location placement."
+  ironing: "Ironing station: scan once to start, scan again to finish.",
+  pickup: "Dispatch station: assembly and storage placement before manager handoff."
 };
 
 export function isScanStation(station) {

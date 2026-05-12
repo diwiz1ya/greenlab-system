@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { normalizeProductionQrCode } from "../route-sheets.js";
 import { app, resetQcState, setLastScan, setNotice, state } from "../state.js";
 
 const QC_AUTO_SUBMIT_DELAY_MS = 120;
@@ -19,13 +20,14 @@ const qcQrScannerState = {
 };
 
 function normalizeQcCameraQrCode(value) {
+  const productionQr = normalizeProductionQrCode(value);
+  if (productionQr) return productionQr;
   let normalized = String(value || "")
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "");
   if (!normalized) return "";
   normalized = normalized.replace(/^QR[-]/, "QR:");
-  if (/^BIN-\d{3}$/.test(normalized)) return `QR:${normalized}`;
   if (/^B-\d{4,}-\d+$/.test(normalized)) return `QR:${normalized}`;
   return normalized;
 }
@@ -174,7 +176,7 @@ function closeQcQrScanner() {
   }
 }
 
-export function openQcQrScanner({ title = "QR scanning", subtitle = "Point camera at basket QR" } = {}) {
+export function openQcQrScanner({ title = "QR scanning", subtitle = "Point camera at route sheet QR" } = {}) {
   return new Promise(async (resolve) => {
     closeQcQrScanner();
     qcQrScannerState.lastErrorMessage = "";
@@ -694,7 +696,7 @@ export async function runQcInspectFromInput(inputId, renderApp, helpers) {
       if (refreshedInput) refreshedInput.focus();
       return;
     }
-    setNotice("warn", "Enter basket QR code for QC check.");
+    setNotice("warn", "Enter route sheet QR code for QC check.");
     await renderApp();
     const refreshedInput = document.getElementById(inputId);
     if (refreshedInput) refreshedInput.focus();
@@ -791,7 +793,7 @@ export async function runQcDecision(action, reason, renderApp, helpers) {
   } : null;
 
   if (!code) {
-    setNotice("warn", "Scan basket for QC first.");
+    setNotice("warn", "Scan route sheet for QC first.");
     await renderApp();
     return;
   }

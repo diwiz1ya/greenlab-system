@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { buildRouteSheetQr, normalizeProductionQrCode } from "../route-sheets.js";
 import { app, clearLastScan, setNotice, state } from "../state.js";
 import { renderSortingEditorModal } from "../render/sorting.js";
 import { escapeHtml } from "../utils.js";
@@ -201,7 +202,7 @@ function buildSortingMultipartBody(orderId, baskets) {
     };
   });
 
-  formData.append("payload", JSON.stringify({ orderId, baskets: payloadBaskets }));
+  formData.append("payload", JSON.stringify({ orderId, routeSheets: payloadBaskets }));
   return formData;
 }
 
@@ -251,7 +252,7 @@ function buildSortingRowsFromOrderDetails(order) {
 }
 
 function normalizeSortingQr(value) {
-  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  return normalizeProductionQrCode(value);
 }
 
 function normalizeSortingWizardStep(value) {
@@ -640,7 +641,7 @@ function openSortingQrScanner(orderId) {
         <div class="sorting-qr-scanner-head">
           <div>
             <strong>QR scanning</strong>
-            <div class="muted">Point the camera at a basket QR code</div>
+            <div class="muted">Point the camera at a route sheet QR code</div>
           </div>
           <button type="button" class="secondary" data-sorting-qr-close>Close</button>
         </div>
@@ -808,19 +809,33 @@ function buildSortingSheetsHtml(order, rowsWithMeta, printedAtIso) {
     const counts = normalizeSortingItemCounts(row?.itemCounts || row?.item_counts);
     const total = counts.top + counts.bottom + counts.underwear + counts.socksPairs;
     const partyCode = buildSortingSheetPartyCode(order?.public_id, rowIndex);
+    const routeSheetQr = normalizeSortingQr(row?.scannedQr || row?.qrCode || row?.qr_code)
+      || buildRouteSheetQr(order?.public_id, rowIndex);
     const category = sortingColorLabels[row?.color] || sortingColorLabels.mixed;
 
     return `
       <section class="sheet">
         <header class="sheet-head">
-          <div class="sheet-eyebrow">Green Lab · Batch sheet</div>
+          <div>
+            <div class="sheet-eyebrow">Green Lab · Route sheet</div>
+            <div class="sheet-subtitle">Scan this QR at every production station</div>
+          </div>
           <div class="sheet-code">${escapeHtml(partyCode)}</div>
         </header>
+        <section class="sheet-qr-block">
+          <div class="sheet-qr-image">
+            <img src="/api/qr.svg?text=${encodeURIComponent(routeSheetQr)}" alt="${escapeHtml(routeSheetQr)}" />
+          </div>
+          <div class="sheet-qr-copy">
+            <span>Route sheet QR</span>
+            <strong>${escapeHtml(routeSheetQr)}</strong>
+          </div>
+        </section>
         <section class="sheet-meta">
           <div class="meta-cell"><span>Order</span><strong>${escapeHtml(String(order?.public_id || "—"))}</strong></div>
           <div class="meta-cell"><span>Customer</span><strong>${escapeHtml(String(order?.customer_name || "—"))}</strong></div>
           <div class="meta-cell"><span>Phone</span><strong>${escapeHtml(String(order?.customer_phone || "—"))}</strong></div>
-          <div class="meta-cell"><span>Batch type</span><strong>${escapeHtml(`${category} #${rowIndex + 1}`)}</strong></div>
+          <div class="meta-cell"><span>Route sheet type</span><strong>${escapeHtml(`${category} #${rowIndex + 1}`)}</strong></div>
         </section>
         <section class="sheet-counts">
           <div class="count-cell"><span>Top</span><strong>${counts.top}</strong></div>
@@ -842,7 +857,7 @@ function buildSortingSheetsHtml(order, rowsWithMeta, printedAtIso) {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Batch sheets ${escapeHtml(String(order?.public_id || ""))}</title>
+  <title>Route sheets ${escapeHtml(String(order?.public_id || ""))}</title>
   <style>
     @page { size: A5 portrait; margin: 10mm; }
     * { box-sizing: border-box; }
@@ -864,7 +879,49 @@ function buildSortingSheetsHtml(order, rowsWithMeta, printedAtIso) {
       padding-bottom: 4mm;
     }
     .sheet-eyebrow { color: #537268; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .sheet-subtitle { color: #567066; font-size: 11px; margin-top: 1mm; }
     .sheet-code { font-size: 22px; font-weight: 700; letter-spacing: .02em; }
+    .sheet-qr-block {
+      align-items: center;
+      border: 1px solid #8ec8b4;
+      border-radius: 10px;
+      display: grid;
+      gap: 5mm;
+      grid-template-columns: 38mm minmax(0, 1fr);
+      margin-bottom: 8mm;
+      padding: 4mm;
+    }
+    .sheet-qr-image {
+      align-items: center;
+      background: #fff;
+      border: 1px solid #d5e5df;
+      border-radius: 8px;
+      display: flex;
+      justify-content: center;
+      min-height: 38mm;
+      padding: 2mm;
+    }
+    .sheet-qr-image img {
+      display: block;
+      height: 34mm;
+      width: 34mm;
+    }
+    .sheet-qr-copy {
+      display: grid;
+      gap: 2mm;
+      min-width: 0;
+    }
+    .sheet-qr-copy span {
+      color: #567066;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    .sheet-qr-copy strong {
+      font-family: "Consolas", "SFMono-Regular", monospace;
+      font-size: 21px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
     .sheet-meta {
       display: grid;
       gap: 4mm;
@@ -1001,6 +1058,11 @@ function getSortingOrderFromButton(button) {
 
 function openSortingModal(order) {
   const draft = ensureSortingDraft(order.id);
+  if (!draft.rows.length) {
+    setSortingRowCount(order.id, 1);
+    setSortingWizardStep(order.id, 1);
+    setSortingActiveRow(order.id, 0);
+  }
   const template = document.createElement("template");
   template.innerHTML = renderSortingEditorModal(order, draft.rows, draft).trim();
   const nextModal = template.content.firstElementChild;
@@ -1099,7 +1161,7 @@ async function addSortingBasketFromScan(orderId, rawQrCode, renderApp, options =
 
   if (!qrCode) {
     if (notifyErrors) {
-      setNotice("warn", "Scan a basket QR code first.");
+      setNotice("warn", "Scan a route sheet QR code first.");
       await renderApp();
     }
     return { ok: false, error: "empty_qr" };
@@ -1107,7 +1169,7 @@ async function addSortingBasketFromScan(orderId, rawQrCode, renderApp, options =
 
   if (draft.rows.length >= sortingMaxBasketsPerOrder) {
     if (notifyErrors) {
-      setNotice("warn", `A single order can contain at most ${sortingMaxBasketsPerOrder} baskets.`);
+      setNotice("warn", `A single order can contain at most ${sortingMaxBasketsPerOrder} route sheets.`);
       await renderApp();
     }
     return { ok: false, error: "max_reached" };
@@ -1115,7 +1177,7 @@ async function addSortingBasketFromScan(orderId, rawQrCode, renderApp, options =
 
   if (draft.rows.some((row) => normalizeSortingQr(row?.scannedQr) === qrCode)) {
     if (notifyErrors) {
-      setNotice("warn", `Basket ${qrCode} is already added.`);
+      setNotice("warn", `Route sheet ${qrCode} is already added.`);
       await renderApp();
     }
     return { ok: false, error: "duplicate_qr" };
@@ -1277,11 +1339,12 @@ function syncSortingCountsDom(orderId, rowIndex) {
     previewItems.textContent = `Items: ${total} · Socks: ${counts.socksPairs} pcs`;
   }
 
-  const finishButton = app.querySelector(
-    `[data-sorting-step-next="${orderId}"][data-sorting-step-next-mode="finish"]`
-  );
-  if (finishButton instanceof HTMLButtonElement) {
-    finishButton.disabled = total <= 0;
+  const nextButtons = app.querySelectorAll(`[data-sorting-step-next="${orderId}"]`);
+  for (const button of nextButtons) {
+    const mode = String(button.dataset.sortingStepNextMode || "").trim();
+    if (button instanceof HTMLButtonElement && (mode === "finish" || mode === "next-existing")) {
+      button.disabled = total <= 0;
+    }
   }
 }
 
@@ -1305,7 +1368,7 @@ export function bindSortingActions(renderApp, helpers) {
     app.dataset.sortingDelegatedBound = "1";
     app.addEventListener("click", async (event) => {
       const target = event.target.closest(
-        "[data-order-modal-close], [data-select-sorting-order], [data-edit-sorted-baskets], [data-return-to-sorting], [data-sorting-close], [data-sorting-scan-back], [data-sorting-open-qr-scanner], [data-sorting-add-basket-scan], [data-sorting-remove-basket], [data-sorting-choice], [data-sorting-open-basket], [data-sorting-step-next], [data-sorting-step-prev], [data-sorting-items-toggle], [data-sorting-items-step], [data-sorting-remove-photo], [data-sorting-print-row], [data-sorting-print-all], [data-create-baskets], [data-update-baskets]"
+        "[data-order-modal-close], [data-select-sorting-order], [data-edit-sorted-baskets], [data-return-to-sorting], [data-sorting-close], [data-sorting-scan-back], [data-sorting-open-qr-scanner], [data-sorting-add-basket-scan], [data-sorting-add-route-sheet], [data-sorting-count-dec], [data-sorting-count-inc], [data-sorting-count-set], [data-sorting-remove-basket], [data-sorting-choice], [data-sorting-open-basket], [data-sorting-step-next], [data-sorting-step-prev], [data-sorting-items-toggle], [data-sorting-items-step], [data-sorting-remove-photo], [data-sorting-print-row], [data-sorting-print-all], [data-create-baskets], [data-update-baskets]"
       );
       if (!target || !app.contains(target)) return;
 
@@ -1396,18 +1459,6 @@ export function bindSortingActions(renderApp, helpers) {
       }
 
       if (target.dataset.sortingClose !== undefined) {
-        const modalSheet = app.querySelector(".sorting-modal-sheet");
-        const modalOrderId = Number(modalSheet?.dataset?.sortingOrderId || 0);
-        if (Number.isFinite(modalOrderId) && modalOrderId > 0) {
-          const draft = ensureSortingDraft(modalOrderId);
-          if (draft.wizardStep === 1 && draft.rows.length > 0) {
-            returnToSortingFillStep(modalOrderId);
-            if (!rerenderSortingModal(modalOrderId)) {
-              await renderApp();
-            }
-            return;
-          }
-        }
         state.activeSortingOrderId = null;
         if (!closeSortingModal()) {
           await renderApp();
@@ -1460,24 +1511,53 @@ export function bindSortingActions(renderApp, helpers) {
         return;
       }
 
+      if (target.dataset.sortingCountDec || target.dataset.sortingCountInc || target.dataset.sortingCountSet) {
+        const rawOrderId = target.dataset.sortingCountDec || target.dataset.sortingCountInc || target.dataset.sortingCountSet;
+        const orderId = Number(rawOrderId);
+        if (!Number.isFinite(orderId)) return;
+        const draft = ensureSortingDraft(orderId);
+        const currentCount = Math.max(1, draft.rows.length || 0);
+        const nextCount = target.dataset.sortingCountSet
+          ? Number(target.dataset.countValue || currentCount)
+          : currentCount + (target.dataset.sortingCountInc ? 1 : -1);
+        setSortingRowCount(orderId, Math.max(1, nextCount));
+        setSortingWizardStep(orderId, 1);
+        if (!rerenderSortingCountUi(orderId) && !rerenderSortingModal(orderId)) {
+          await renderApp();
+        }
+        return;
+      }
+
+      if (target.dataset.sortingAddRouteSheet) {
+        const orderId = Number(target.dataset.sortingAddRouteSheet);
+        if (!Number.isFinite(orderId)) return;
+        const draft = ensureSortingDraft(orderId);
+        if (draft.rows.length >= sortingMaxBasketsPerOrder) {
+          setNotice("warn", `A single order can contain at most ${sortingMaxBasketsPerOrder} route sheets.`);
+          await renderApp();
+          return;
+        }
+        draft.rows.push(createSortingRow({ itemsExpanded: true }));
+        setSortingWizardStep(orderId, 2);
+        setSortingActiveRow(orderId, draft.rows.length - 1);
+        if (!rerenderSortingModal(orderId)) {
+          await renderApp();
+        }
+        return;
+      }
+
       if (target.dataset.sortingRemoveBasket) {
         const orderId = Number(target.dataset.sortingRemoveBasket);
         const rowIndex = Number(target.dataset.rowIndex);
         if (!Number.isFinite(orderId) || !Number.isFinite(rowIndex)) return;
         const draft = ensureSortingDraft(orderId);
-        if (!draft.rows[rowIndex]) return;
+        if (!draft.rows[rowIndex] || draft.rows.length <= 1) return;
         draft.rows.splice(rowIndex, 1);
-        if (!draft.rows.length) {
-          setSortingWizardStep(orderId, 1);
-          setSortingActiveRow(orderId, 0);
-        } else {
-          setSortingActiveRow(orderId, Math.max(0, rowIndex - 1));
-        }
-        if (!rerenderSortingScanUi(orderId) && !rerenderSortingModal(orderId)) {
+        setSortingWizardStep(orderId, 2);
+        setSortingActiveRow(orderId, Math.max(0, Math.min(rowIndex, draft.rows.length - 1)));
+        if (!rerenderSortingModal(orderId)) {
           await renderApp();
-          return;
         }
-        focusSortingScanInput(orderId);
         return;
       }
 
@@ -1501,9 +1581,7 @@ export function bindSortingActions(renderApp, helpers) {
 
         if (draft.wizardStep === 1) {
           if (!draft.rows.length) {
-            setNotice("warn", "Add at least one basket.");
-            await renderApp();
-            return;
+            setSortingRowCount(orderId, 1);
           }
           setSortingWizardStep(orderId, 2);
           const firstEmptyIndex = findFirstEmptySortingRowIndex(draft.rows);
@@ -1513,16 +1591,19 @@ export function bindSortingActions(renderApp, helpers) {
           const activeIndex = clampSortingRowIndex(draft.activeRowIndex, draft.rows.length);
           const activeRow = draft.rows[activeIndex];
           if (getSortingRowItemsTotal(activeRow) <= 0) {
-            setNotice("warn", `Fill Basket ${activeIndex + 1}.`);
+            setNotice("warn", `Fill route sheet ${activeIndex + 1}.`);
             await renderApp();
             return;
           }
-          if (mode === "add-more") {
+          if (mode === "next-existing") {
+            setSortingActiveRow(orderId, Math.min(activeIndex + 1, draft.rows.length - 1));
+            setSortingWizardStep(orderId, 2);
+          } else if (mode === "add-more") {
             setSortingWizardStep(orderId, 1);
           } else {
             const firstEmptyIndex = findFirstEmptySortingRowIndex(draft.rows);
             if (firstEmptyIndex >= 0) {
-              setNotice("warn", `Fill Basket ${firstEmptyIndex + 1}.`);
+              setNotice("warn", `Fill route sheet ${firstEmptyIndex + 1}.`);
               setSortingWizardStep(orderId, 2);
               setSortingActiveRow(orderId, firstEmptyIndex);
               await renderApp();
@@ -1534,9 +1615,6 @@ export function bindSortingActions(renderApp, helpers) {
 
         if (!rerenderSortingModal(orderId)) {
           await renderApp();
-        }
-        if (draft.wizardStep === 1) {
-          focusSortingScanInput(orderId);
         }
         return;
       }
@@ -1690,13 +1768,13 @@ export function bindSortingActions(renderApp, helpers) {
         const draft = syncSortingDraftFromInputs(orderId);
         const baskets = draft.rows.map((row, index) => buildBasketPayload(row, index));
         if (!baskets.length) {
-          setNotice("warn", "Add at least one basket before saving.");
+          setNotice("warn", "Add at least one route sheet before saving.");
           await renderApp();
           return;
         }
         const hasEmptyRows = draft.rows.some((row) => getSortingRowItemsTotal(row) <= 0);
         if (hasEmptyRows) {
-          setNotice("warn", "Fill item counts in all baskets before saving.");
+          setNotice("warn", "Fill item counts in all route sheets before saving.");
           await renderApp();
           return;
         }
@@ -1707,7 +1785,7 @@ export function bindSortingActions(renderApp, helpers) {
         try {
           const idempotencyKey = createClientIdempotencyKey(`sorting-update-${orderId}`);
           const formData = buildSortingMultipartBody(orderId, baskets);
-          await api("/api/sorting/update-baskets", {
+          await api("/api/sorting/update-route-sheets", {
             method: "POST",
             body: formData,
             headers: {
@@ -1733,13 +1811,13 @@ export function bindSortingActions(renderApp, helpers) {
         const draft = syncSortingDraftFromInputs(orderId);
         const baskets = draft.rows.map((row, index) => buildBasketPayload(row, index));
         if (!baskets.length) {
-          setNotice("warn", "Add at least one basket before starting sorting.");
+          setNotice("warn", "Add at least one route sheet before starting sorting.");
           await renderApp();
           return;
         }
         const hasEmptyRows = draft.rows.some((row) => getSortingRowItemsTotal(row) <= 0);
         if (hasEmptyRows) {
-          setNotice("warn", "Fill item counts in all baskets before starting sorting.");
+          setNotice("warn", "Fill item counts in all route sheets before starting sorting.");
           await renderApp();
           return;
         }
@@ -1750,7 +1828,7 @@ export function bindSortingActions(renderApp, helpers) {
         try {
           const idempotencyKey = createClientIdempotencyKey(`sorting-create-${orderId}`);
           const formData = buildSortingMultipartBody(orderId, baskets);
-          await api("/api/sorting/create-baskets", {
+          await api("/api/sorting/create-route-sheets", {
             method: "POST",
             body: formData,
             headers: {

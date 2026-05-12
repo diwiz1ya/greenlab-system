@@ -1,5 +1,5 @@
 import { stationLabels } from "../state.js";
-import { escapeHtml } from "../utils.js";
+import { escapeHtml, renderCameraIconButton } from "../utils.js";
 import { renderOrderMeta } from "./manager.js";
 import { renderQcWorkbench } from "./qc.js";
 
@@ -26,6 +26,93 @@ function renderScanStatus(lastScan, station) {
     <section class="scan-status error" data-scan-status="${station}">
       <strong>Error</strong>
       <div>${escapeHtml(lastScan.message || "QR not confirmed.")}</div>
+    </section>
+  `;
+}
+
+function formatElapsedMinutes(value) {
+  const minutes = Number(value || 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "just started";
+  if (minutes === 1) return "1 min";
+  return `${Math.round(minutes)} min`;
+}
+
+function renderIroningWorkbench(station, orders, ironingWorkbench, lastScan) {
+  const activeSessions = Array.isArray(ironingWorkbench?.activeSessions) ? ironingWorkbench.activeSessions : [];
+  const activeBasketIds = new Set(activeSessions.map((session) => Number(session.basket_id || 0)).filter(Boolean));
+  const visibleBasketCount = (Array.isArray(orders) ? orders : []).reduce((count, order) => {
+    const baskets = Array.isArray(order?.baskets) ? order.baskets : [];
+    if (baskets.length) {
+      return count + baskets.filter((basket) => !activeBasketIds.has(Number(basket?.id || 0))).length;
+    }
+    return count + Number(order?.basket_count || 0);
+  }, 0);
+  const waitingCount = Math.max(0, visibleBasketCount - activeSessions.length);
+
+  return `
+    <section class="panel simple-scan-shell ironing-workbench">
+      <div class="kiosk-layout ironing-layout">
+        <div class="ironing-scan-panel">
+          <div>
+            <div class="eyebrow">Work timer · Ironing</div>
+            <h3>Scan to start or finish</h3>
+            <p class="muted">First scan starts the ironing timer. Scan the same route sheet again when ironing is done.</p>
+          </div>
+          <div class="scan-kiosk-form ironing-scan-form">
+            <label>
+              Route sheet QR
+              <span class="qr-camera-input-wrap">
+                <input
+                  class="scan-large"
+                  id="simple-scan-input"
+                  data-scan-input-for="${station}"
+                  placeholder="QR:RS-001"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                ${renderCameraIconButton({
+                  attributes: {
+                    "data-open-simple-camera": station,
+                    "data-simple-camera-input-id": "simple-scan-input"
+                  }
+                })}
+              </span>
+            </label>
+            ${renderScanStatus(lastScan, station)}
+            <div class="kiosk-meta">
+              <span class="pill ${activeSessions.length ? "warn" : "ok"}" title="Route sheets with an active ironing timer">In work: ${activeSessions.length}</span>
+              <span class="pill ${waitingCount ? "warn" : "ok"}" title="Route sheets at ironing that have not been started yet">Ready: ${waitingCount}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ironing-active-list stack">
+          <div class="ironing-list-head">
+            <div>
+              <div class="eyebrow">In ironing</div>
+              <strong>Active route sheets</strong>
+            </div>
+          </div>
+          <div class="ironing-session-scroll">
+            ${
+              activeSessions.length
+                ? activeSessions.map((session) => `
+                    <article class="card ironing-session-card">
+                      <div>
+                        <strong>${escapeHtml(session.basket_code || "Route sheet")}</strong>
+                        <div class="muted">${escapeHtml(session.public_id || "")}</div>
+                      </div>
+                      <div class="ironing-session-meta">
+                        <span class="pill warn">${escapeHtml(formatElapsedMinutes(session.elapsed_minutes))}</span>
+                        <code>${escapeHtml(session.qr_code || "")}</code>
+                      </div>
+                    </article>
+                  `).join("")
+                : '<div class="card"><span class="muted">No route sheets currently being ironed.</span></div>'
+            }
+          </div>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -83,27 +170,19 @@ function renderMachineFlowIcon(kind) {
 }
 
 function renderMachineScanButton({ station, inputId, kind, submitMode = "", submitLoadId = 0 }) {
-  const label = kind === "machine" ? "Scan machine QR" : "Scan basket QR";
-  const submitAttr = submitMode ? ` data-machine-camera-submit="${submitMode}"` : "";
-  const submitLoadAttr = submitLoadId ? ` data-machine-camera-submit-load="${submitLoadId}"` : "";
-  return `
-    <button
-      class="machine-scan-icon-button"
-      type="button"
-      aria-label="${escapeHtml(label)}"
-      title="${escapeHtml(label)}"
-      data-machine-open-camera="${station}"
-      data-machine-camera-input-id="${inputId}"
-      data-machine-camera-kind="${kind}"${submitAttr}${submitLoadAttr}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect>
-        <path d="M8 4.5h8"></path>
-        <path d="M12 9v6"></path>
-        <path d="M9 12h6"></path>
-      </svg>
-    </button>
-  `;
+  const label = kind === "machine" ? "Scan machine QR" : "Scan route sheet QR";
+  const attributes = {
+    "data-machine-open-camera": station,
+    "data-machine-camera-input-id": inputId,
+    "data-machine-camera-kind": kind
+  };
+  if (submitMode) {
+    attributes["data-machine-camera-submit"] = submitMode;
+  }
+  if (submitLoadId) {
+    attributes["data-machine-camera-submit-load"] = submitLoadId;
+  }
+  return renderCameraIconButton({ label, attributes });
 }
 
 function renderMachineLoadFlow(station, draft, submittingMachineAction) {
@@ -127,8 +206,8 @@ function renderMachineLoadFlow(station, draft, submittingMachineAction) {
     startButtonLabel = "Scan machine";
     startBlockedReason = "Button is unavailable until machine QR is scanned.";
   } else if (!selectedBasket) {
-    startButtonLabel = "Scan basket";
-    startBlockedReason = "Button is unavailable until basket QR is scanned and added.";
+    startButtonLabel = "Scan route sheet";
+    startBlockedReason = "Button is unavailable until route sheet QR is scanned and added.";
   } else if (canStart) {
     startButtonLabel = "Ready to start";
   }
@@ -142,7 +221,7 @@ function renderMachineLoadFlow(station, draft, submittingMachineAction) {
         </div>
         <div class="machine-unload-step ${machineReady ? (selectedBasket ? "done" : "active") : "idle"}">
           <strong>Step 2</strong>
-          <span>${machineReady ? (selectedBasket ? `Basket added: ${escapeHtml(selectedBasket)}` : "Scan basket") : "Waiting for step 1"}</span>
+          <span>${machineReady ? (selectedBasket ? `Route sheet added: ${escapeHtml(selectedBasket)}` : "Scan route sheet") : "Waiting for step 1"}</span>
         </div>
       </div>
 
@@ -173,7 +252,7 @@ function renderMachineLoadFlow(station, draft, submittingMachineAction) {
                   <strong>Scan machine</strong>
                 </div>
               </div>
-              <div class="machine-flow-scan-row">
+              <div class="machine-flow-scan-row qr-camera-input-wrap">
                 <input
                   id="${machineInputId}"
                   data-machine-machine-input="${station}"
@@ -191,15 +270,15 @@ function renderMachineLoadFlow(station, draft, submittingMachineAction) {
             <article class="machine-flow-step-card is-active is-minimal">
               <div class="machine-flow-step-head">
                 <div class="machine-flow-step-copy">
-                  <strong>Scan basket</strong>
+                  <strong>Scan route sheet</strong>
                 </div>
               </div>
-              <div class="machine-flow-scan-row">
+              <div class="machine-flow-scan-row qr-camera-input-wrap">
                 <input
                   id="${basketInputId}"
                   data-machine-basket-input="${station}"
                   class="machine-basket-input"
-                  placeholder="QR:BIN-001"
+                  placeholder="QR:RS-001"
                   value="${escapeHtml(basketInputValue)}"
                   autocomplete="off"
                   spellcheck="false"
@@ -223,7 +302,7 @@ function renderMachineLoadFlow(station, draft, submittingMachineAction) {
                 hasBasketInput && !selectedBasket
                   ? `
                     <div class="machine-flow-footer-hint muted">
-                      Press Enter to add basket into the cycle.
+                      Press Enter to add route sheet into the cycle.
                     </div>
                   `
                   : ""
@@ -270,7 +349,7 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
   const selectedPending = Number(selectedEntry?.pendingUnloadCount || 0);
   const selectedUnloaded = Number(selectedEntry?.unloadedCount || 0);
   const selectedTotal = Number(selectedEntry?.basketsCount || 0);
-  let unloadButtonLabel = "Unload basket";
+  let unloadButtonLabel = "Unload route sheet";
   let unloadBlockedReason = "";
   if (submittingMachineAction) {
     unloadButtonLabel = "Unloading...";
@@ -279,8 +358,8 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
     unloadButtonLabel = "Scan machine";
     unloadBlockedReason = "Button is unavailable until machine QR is scanned.";
   } else if (!hasBasketInput) {
-    unloadButtonLabel = "Scan basket";
-    unloadBlockedReason = "Button is unavailable until basket QR is scanned.";
+    unloadButtonLabel = "Scan route sheet";
+    unloadBlockedReason = "Button is unavailable until route sheet QR is scanned.";
   } else if (canUnload) {
     unloadButtonLabel = "Ready to unload";
   }
@@ -294,7 +373,7 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
         </div>
         <div class="machine-unload-step ${selectedEntry ? (hasBasketInput ? "done" : "active") : "idle"}">
           <strong>Step 2</strong>
-          <span>${selectedEntry ? "Scan basket" : "Waiting for step 1"}</span>
+          <span>${selectedEntry ? "Scan route sheet" : "Waiting for step 1"}</span>
         </div>
       </div>
       ${successChip ? `<div class="machine-unload-success-chip" role="status" aria-live="polite">${escapeHtml(successChip)}</div>` : ""}
@@ -340,7 +419,7 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
                   <strong>Scan machine</strong>
                 </div>
               </div>
-              <div class="machine-flow-scan-row">
+              <div class="machine-flow-scan-row qr-camera-input-wrap">
                 <input
                   id="${unloadMachineInputId}"
                   data-machine-unload-machine-input="${station}"
@@ -358,17 +437,17 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
             <article class="machine-flow-step-card is-active is-minimal">
               <div class="machine-flow-step-head">
                 <div class="machine-flow-step-copy">
-                  <strong>Scan basket</strong>
+                  <strong>Scan route sheet</strong>
                 </div>
               </div>
-              <div class="machine-flow-scan-row">
+              <div class="machine-flow-scan-row qr-camera-input-wrap">
                 <input
                   id="${unloadBasketInputId}"
                   data-machine-unload-input="${station}"
                   data-machine-unload-load="${selectedEntry.loadId}"
                   data-machine-unload-draft="${station}"
                   class="machine-basket-input"
-                  placeholder="QR:BIN-001"
+                  placeholder="QR:RS-001"
                   value="${escapeHtml(basketInputValue)}"
                   autocomplete="off"
                   spellcheck="false"
@@ -385,7 +464,7 @@ function renderMachineUnloadFlow(station, loadEntries, draft, submittingMachineA
                 hasBasketInput
                   ? `
                     <div class="machine-flow-ready-note">
-                      You can unload a basket for ${stationTitle}.
+                      You can unload a route sheet for ${stationTitle}.
                     </div>
                   `
                   : ""
@@ -506,6 +585,7 @@ export function renderSimpleScanModeWithStatus(
   submittingQcTransferRequestId = null,
   qcTransferScanDrafts = {},
   machineWorkbench = null,
+  ironingWorkbench = null,
   machineDraft = null,
   submittingMachineAction = null
 ) {
@@ -545,6 +625,10 @@ export function renderSimpleScanModeWithStatus(
     `;
   }
 
+  if (station === "ironing") {
+    return renderIroningWorkbench(station, orders, ironingWorkbench, lastScan);
+  }
+
   return `
     <section class="panel simple-scan-shell">
       <div class="kiosk-layout">
@@ -554,19 +638,24 @@ export function renderSimpleScanModeWithStatus(
         </div>
         <div class="scan-kiosk-form">
           <label>
-            Basket QR code
-            <input
-              class="scan-large"
-              id="simple-scan-input"
-              data-scan-input-for="${station}"
-              placeholder="QR:B-2402-1"
-              autocomplete="off"
-              spellcheck="false"
-            />
+            Route sheet QR
+            <span class="qr-camera-input-wrap">
+              <input
+                class="scan-large"
+                id="simple-scan-input"
+                data-scan-input-for="${station}"
+                placeholder="QR:B-2402-1"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              ${renderCameraIconButton({
+                attributes: {
+                  "data-open-simple-camera": station,
+                  "data-simple-camera-input-id": "simple-scan-input"
+                }
+              })}
+            </span>
           </label>
-          <div class="action-row simple-scan-actions">
-            <button class="secondary" type="button" data-open-simple-camera="${station}" data-simple-camera-input-id="simple-scan-input">Open camera</button>
-          </div>
           ${renderScanStatus(lastScan, station)}
           <div class="kiosk-meta">
             <span class="pill ${orders.length > 0 ? "ok" : "warn"}" data-kiosk-active-count="${station}">In progress: ${orders.length}</span>
@@ -575,7 +664,7 @@ export function renderSimpleScanModeWithStatus(
 
         ${station === "pickup" ? `
           <div class="simple-pickup-list stack">
-            <div class="eyebrow">Ready for pickup</div>
+            <div class="eyebrow">Ready for handoff</div>
             ${orders.length
               ? orders.map((order) => `
                   <article class="card">
@@ -586,7 +675,7 @@ export function renderSimpleScanModeWithStatus(
                     </div>
                   </article>
                 `).join("")
-              : '<div class="card"><span class="muted">No orders ready for pickup.</span></div>'}
+              : '<div class="card"><span class="muted">No orders ready for handoff.</span></div>'}
           </div>
         ` : ""}
       </div>

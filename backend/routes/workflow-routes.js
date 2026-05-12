@@ -44,11 +44,15 @@ function normalizeSortingRequestBody(body, filesByField = new Map()) {
         .filter(Boolean)
         .slice(0, 20)
     : [];
-  const baskets = normalizeSortingBaskets(body?.baskets, filesByField);
+  const routeSheetSource = Array.isArray(body?.routeSheets)
+    ? body.routeSheets
+    : (Array.isArray(body?.route_sheets) ? body.route_sheets : body?.baskets);
+  const baskets = normalizeSortingBaskets(routeSheetSource, filesByField);
   return {
     orderId: parsePositiveInt(body?.orderId),
     types,
-    baskets
+    baskets,
+    routeSheets: baskets
   };
 }
 
@@ -101,6 +105,7 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
     unloadBasketFromMachineLoad,
     cancelMachineLoad,
     scanBasket,
+    listIroningWorkbench,
     rejectBasketFromQc,
     createReworkRequestFromQc,
     approveReworkRequest,
@@ -109,6 +114,7 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
     confirmQcTransferTask,
     inspectQcBasket,
     placeOrderForPickup,
+    confirmPickupAssembly,
     completePickup,
     releaseOrderFromHold
   } = ctx;
@@ -237,7 +243,10 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
     return true;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/sorting/create-baskets") {
+  if (
+    req.method === "POST"
+    && (url.pathname === "/api/sorting/create-baskets" || url.pathname === "/api/sorting/create-route-sheets")
+  ) {
     const session = requireAuth(req, res);
     if (!session) return true;
     if (!requireStationAccess(session, "sorting", res)) return true;
@@ -251,7 +260,7 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
         }
 
         const types = Array.isArray(body?.types) ? body.types : [];
-        const baskets = Array.isArray(body?.baskets) ? body.baskets : [];
+        const baskets = Array.isArray(body?.routeSheets) ? body.routeSheets : [];
 
         try {
           const result = await runIdempotentOperation(req, {
@@ -272,7 +281,23 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
     return true;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/sorting/update-baskets") {
+  if (req.method === "GET" && url.pathname === "/api/ironing/workbench") {
+    const session = requireAuth(req, res);
+    if (!session) return true;
+    if (!requireStationAccess(session, "ironing", res)) return true;
+
+    const snapshot = await listIroningWorkbench();
+    json(res, 200, {
+      station: "ironing",
+      activeSessions: Array.isArray(snapshot?.activeSessions) ? snapshot.activeSessions : []
+    });
+    return true;
+  }
+
+  if (
+    req.method === "POST"
+    && (url.pathname === "/api/sorting/update-baskets" || url.pathname === "/api/sorting/update-route-sheets")
+  ) {
     const session = requireAuth(req, res);
     if (!session) return true;
     if (!requireStationAccess(session, "sorting", res)) return true;
@@ -286,7 +311,7 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
         }
 
         const types = Array.isArray(body?.types) ? body.types : [];
-        const baskets = Array.isArray(body?.baskets) ? body.baskets : [];
+        const baskets = Array.isArray(body?.routeSheets) ? body.routeSheets : [];
         try {
           const result = await runIdempotentOperation(req, {
             routeKey: `sorting.update-baskets:${orderId}`,
@@ -654,6 +679,30 @@ async function handleWorkflowRoutes(req, res, url, ctx) {
         }
 
         const result = await completePickup(orderId, session.username);
+        if (result.error) {
+          json(res, result.status, { error: result.error });
+          return;
+        }
+        json(res, 200, result);
+      })
+      .catch((error) => json(res, 400, { error: error.message }));
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pickup/confirm-assembled") {
+    const session = requireAuth(req, res);
+    if (!session) return true;
+    if (!requireStationAccess(session, "pickup", res)) return true;
+
+    readJson(req)
+      .then(async (body) => {
+        const orderId = parsePositiveInt(body.orderId);
+        if (!orderId) {
+          json(res, 400, { error: "Invalid order id" });
+          return;
+        }
+
+        const result = await confirmPickupAssembly(orderId, session.username);
         if (result.error) {
           json(res, result.status, { error: result.error });
           return;

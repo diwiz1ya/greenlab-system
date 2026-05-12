@@ -1,3 +1,4 @@
+import { buildRouteSheetQr } from "../route-sheets.js";
 import { escapeHtml } from "../utils.js";
 
 const sortingColorOptions = [
@@ -83,11 +84,6 @@ function getRowsPhotosTotal(rows) {
   }, 0);
 }
 
-function toBasketCodeSuffix(publicId) {
-  const value = String(publicId || "").trim();
-  return value.startsWith("GL-") ? value.slice(3) : value;
-}
-
 function normalizeBasketQr(value) {
   return String(value || "").trim();
 }
@@ -95,9 +91,7 @@ function normalizeBasketQr(value) {
 function getBasketQrPreview(orderPublicId, row, index) {
   const scanned = normalizeBasketQr(row?.scannedQr);
   if (scanned) return scanned;
-  if (!orderPublicId) return `Basket-${index + 1}`;
-  const suffix = toBasketCodeSuffix(orderPublicId);
-  return `QR:B-${suffix}-${index + 1}`;
+  return buildRouteSheetQr(orderPublicId || "NEW", index);
 }
 
 function makeBasketLabel(row, index) {
@@ -194,33 +188,17 @@ function renderSortedWaitingQueue(orders) {
 }
 
 function renderSortingScanSetup(orderId, rows, draft = {}) {
-  const scanInput = String(draft?.scanInput || "").trim();
-  const hasRows = rows.length > 0;
-  const title = hasRows ? "Add the next basket" : "Scan a basket";
-  const hint = hasRows
-    ? "Scan the QR of a new basket. Editing opens immediately after scan."
-    : "Scan or press Enter to add a basket and open editing immediately.";
+  void draft;
+  const count = Math.max(1, rows.length || 0);
   return `
     <section class="sorting-step-panel">
       <div class="sorting-basket-head">
-        <strong>${title}</strong>
+        <strong>Route sheets for this order</strong>
       </div>
-      <div class="sorting-scan-entry">
-        <label>
-          Basket QR
-          <input
-            type="text"
-            value="${escapeHtml(scanInput)}"
-            placeholder="QR:BIN-001"
-            data-sorting-basket-scan-input="${orderId}"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-        <div class="sorting-scan-actions">
-          <button type="button" class="secondary" data-sorting-open-qr-scanner="${orderId}">Open camera</button>
-        </div>
-        <div class="sorting-scan-camera-hint muted">${hint}</div>
+      <p class="muted">Choose how many route sheets this order needs. QR codes will be generated automatically and printed on the next step.</p>
+      ${renderSortingCountControl(orderId, count)}
+      <div class="sorting-step-actions">
+        <button type="button" data-sorting-step-next="${orderId}" data-sorting-step-next-mode="fill">Continue</button>
       </div>
     </section>
   `;
@@ -228,8 +206,8 @@ function renderSortingScanSetup(orderId, rows, draft = {}) {
 
 function renderSortingCountControl(orderId, count) {
   return `
-    <section class="sorting-count hidden">
-      <span class="sorting-group-title">Basket count</span>
+    <section class="sorting-count">
+      <span class="sorting-group-title">Route sheets</span>
       <div class="sorting-count-main">
         <button type="button" class="secondary sorting-count-btn" data-sorting-count-dec="${orderId}" tabindex="-1">−</button>
         <strong class="sorting-count-value">${count}</strong>
@@ -323,7 +301,7 @@ function renderSortingPhotoEditor(orderId, rowIndex, row) {
                     >×</button>
                   </div>
                 `
-              : `<div class="muted sorting-photo-empty">Photo of all items in the basket.</div>`}
+              : `<div class="muted sorting-photo-empty">Photo of all items for this route sheet.</div>`}
             <label class="sorting-photo-picker camera-only">
               <input
                 type="file"
@@ -396,29 +374,48 @@ function renderSortingSingleBasketEditor(orderId, rows, activeIndex) {
   const counts = getRowItemCounts(row);
   const total = getRowItemsTotal(row);
   const canFinishActiveBasket = total > 0;
+  const hasNext = activeIndex < rows.length - 1;
 
   return `
     <section class="sorting-step-panel">
       <div class="sorting-basket-head">
-        <strong>Basket ${activeIndex + 1}</strong>
+        <strong>Route sheet ${activeIndex + 1}</strong>
       </div>
-      ${rows.length > 1 ? `
-        <div class="sorting-basket-tabs">
+      <div class="sorting-basket-tabs" aria-label="Route sheets">
           ${rows.map((basketRow, index) => {
             void basketRow;
             return `
-              <button
-                type="button"
-                class="ghost sorting-basket-tab ${index === activeIndex ? "active" : ""}"
-                data-sorting-open-basket="${orderId}"
-                data-row-index="${index}"
-              >
-                ${escapeHtml(`${index + 1}`)}
-              </button>
+              <span class="sorting-basket-tab-wrap ${index === activeIndex ? "active" : ""}">
+                <button
+                  type="button"
+                  class="ghost sorting-basket-tab ${index === activeIndex ? "active" : ""}"
+                  data-sorting-open-basket="${orderId}"
+                  data-row-index="${index}"
+                  aria-label="${escapeHtml(`Open route sheet ${index + 1}`)}"
+                >
+                  ${escapeHtml(`${index + 1}`)}
+                </button>
+                ${rows.length > 1 ? `
+                  <button
+                    type="button"
+                    class="sorting-basket-tab-remove"
+                    data-sorting-remove-basket="${orderId}"
+                    data-row-index="${index}"
+                    aria-label="${escapeHtml(`Remove route sheet ${index + 1}`)}"
+                    title="${escapeHtml(`Remove route sheet ${index + 1}`)}"
+                  >×</button>
+                ` : ""}
+              </span>
             `;
           }).join("")}
-        </div>
-      ` : ""}
+          <button
+            type="button"
+            class="ghost sorting-basket-tab sorting-basket-tab-add"
+            data-sorting-add-route-sheet="${orderId}"
+            aria-label="Add route sheet"
+            title="Add route sheet"
+          >+</button>
+      </div>
       <div class="sorting-row compact ${getColorToneClass(row.color)}">
         <div class="sorting-row-head">
           <div class="sorting-row-selected">
@@ -459,15 +456,27 @@ function renderSortingSingleBasketEditor(orderId, rows, activeIndex) {
         ${renderSortingPhotoEditor(orderId, activeIndex, row)}
       </div>
       <div class="sorting-step-actions">
-        <button type="button" class="secondary" data-sorting-step-next="${orderId}" data-sorting-step-next-mode="add-more">Add next basket</button>
-        <button
-          type="button"
-          data-sorting-step-next="${orderId}"
-          data-sorting-step-next-mode="finish"
-          ${canFinishActiveBasket ? "" : "disabled"}
-        >
-          Save
-        </button>
+        ${hasNext
+          ? `
+            <button
+              type="button"
+              data-sorting-step-next="${orderId}"
+              data-sorting-step-next-mode="next-existing"
+              ${canFinishActiveBasket ? "" : "disabled"}
+            >
+              Next route sheet
+            </button>
+          `
+          : `
+            <button
+              type="button"
+              data-sorting-step-next="${orderId}"
+              data-sorting-step-next-mode="finish"
+              ${canFinishActiveBasket ? "" : "disabled"}
+            >
+              Review
+            </button>
+          `}
       </div>
     </section>
   `;
@@ -478,7 +487,7 @@ function renderSortingReview(orderId, rows, options = {}) {
   const submitLabel = String(options.submitLabel || "Finish");
   const hasEmptyRows = Boolean(options.hasEmptyRows);
   const isSingleBasket = rows.length === 1;
-  const backLabel = isSingleBasket ? "To basket" : "To baskets";
+  const backLabel = isSingleBasket ? "To route sheet" : "To route sheets";
   const totals = getRowsItemsTotals(rows);
   const photosTotal = getRowsPhotosTotal(rows);
   return `
@@ -489,7 +498,7 @@ function renderSortingReview(orderId, rows, options = {}) {
       </div>
       <div class="sorting-review-summary">
         <article class="sorting-review-kpi">
-          <span class="muted">Baskets</span>
+          <span class="muted">Route sheets</span>
           <strong>${rows.length}</strong>
         </article>
         <article class="sorting-review-kpi">
@@ -581,7 +590,7 @@ function renderSortingPreview(order, rows) {
     return `
       <div class="sorting-preview-item ${getColorToneClass(row.color)}" data-preview-row-index="${index}">
         <div class="sorting-preview-text">
-          <strong>Basket ${index + 1}</strong>
+          <strong>Route sheet ${index + 1}</strong>
           <div class="sorting-preview-visual">
             <img src="${escapeHtml(basketImage)}" alt="" class="sorting-preview-basket-image" loading="lazy" />
             <div class="sorting-preview-visual-meta">
@@ -590,7 +599,7 @@ function renderSortingPreview(order, rows) {
             </div>
           </div>
           <div class="sorting-preview-qr-block">
-            <span class="sorting-preview-qr-label">Basket QR code</span>
+            <span class="sorting-preview-qr-label">Route sheet QR</span>
             <code>${escapeHtml(basketQr)}</code>
           </div>
         </div>
@@ -609,7 +618,7 @@ function renderSortingFocusedPreview(order, rows, activeIndex) {
   return `
     <div class="sorting-preview-item sorting-preview-focus ${getColorToneClass(row.color)}" data-preview-row-index="${activeIndex}">
       <div class="sorting-preview-text">
-        <strong>Basket ${activeIndex + 1}</strong>
+        <strong>Route sheet ${activeIndex + 1}</strong>
         <div class="sorting-preview-focus-image-wrap">
           <img src="${escapeHtml(basketImage)}" alt="" class="sorting-preview-basket-image" loading="lazy" />
         </div>
@@ -618,7 +627,7 @@ function renderSortingFocusedPreview(order, rows, activeIndex) {
           <span class="sorting-preview-items">${escapeHtml(`Items: ${total} · Socks: ${counts.socksPairs} pcs`)}</span>
         </div>
         <div class="sorting-preview-qr-block">
-          <span class="sorting-preview-qr-label">Basket QR code</span>
+          <span class="sorting-preview-qr-label">Route sheet QR</span>
           <code>${escapeHtml(basketQr)}</code>
         </div>
       </div>
@@ -629,7 +638,7 @@ function renderSortingFocusedPreview(order, rows, activeIndex) {
 export function renderSortingEditorModal(order, rows, draft = {}) {
   const isEditMode = order?.status === "sorted" || order?.sortingMode === "edit";
   const submitActionAttr = isEditMode ? "data-update-baskets" : "data-create-baskets";
-  const submitLabel = isEditMode ? "Save baskets" : "Finish";
+  const submitLabel = isEditMode ? "Save route sheets" : "Finish";
   const hasNoRows = !rows.length;
   const rawStep = Number(draft?.wizardStep || 1);
   const step = hasNoRows ? 1 : rawStep;
@@ -637,7 +646,7 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
   const activeBasketIndex = Math.max(0, Math.min(Number(draft?.activeRowIndex || 0), Math.max(0, rows.length - 1)));
   const rowsTotals = getRowsItemsTotals(rows);
   const hasEmptyRows = hasNoRows || rows.some((row) => getRowItemsTotal(row) <= 0);
-  const isScanReturnStep = step === 1 && rows.length > 0;
+  const isScanReturnStep = false;
 
   return `
     <section class="sorting-modal" role="dialog" aria-modal="true">
@@ -682,7 +691,7 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
               <aside class="sorting-editor-side">
                 <section class="sorting-preview">
                   <div class="sorting-config-header">
-                    <strong>QR</strong>
+                    <strong>Preview</strong>
                     <span class="pill">${rows.length}</span>
                   </div>
                   ${(step >= 2 && rows.length)
@@ -698,10 +707,10 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
         <footer class="sorting-modal-footer workflow-modal-footer">
           <div class="sorting-footer-meta">
             <span class="pill">step ${compactStep}/2</span>
-            ${step === 2 ? `<span class="pill">basket ${activeBasketIndex + 1}/${rows.length}</span>` : ""}
-            ${step === 3 ? `<span class="pill">baskets ready: ${rows.length}/${rows.length}</span>` : ""}
+            ${step === 2 ? `<span class="pill">route sheet ${activeBasketIndex + 1}/${rows.length}</span>` : ""}
+            ${step === 3 ? `<span class="pill">route sheets ready: ${rows.length}/${rows.length}</span>` : ""}
             ${step === 3 ? `<span class="pill">items: ${rowsTotals.total}</span>` : ""}
-            ${hasEmptyRows ? '<span class="pill warn">fill all baskets</span>' : ""}
+            ${step !== 1 && hasEmptyRows ? '<span class="pill warn">fill all route sheets</span>' : ""}
           </div>
         </footer>
       </article>

@@ -1,12 +1,11 @@
 import { api } from "../api.js";
+import { isProductionQr, normalizeProductionQrCode } from "../route-sheets.js";
 import { app, setNotice, state } from "../state.js";
 
 const MACHINE_CODE_PATTERNS = {
   washing: /^W0[1-6]$/,
   drying: /^D0[1-6]$/
 };
-const MACHINE_FLOW_BASKET_QR_PATTERN = /^QR:BIN-\d{3}$/;
-
 function normalizeMachineCode(value) {
   let normalized = String(value || "")
     .trim()
@@ -19,16 +18,7 @@ function normalizeMachineCode(value) {
 }
 
 function normalizeBasketQrCode(value) {
-  let normalized = String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "");
-  if (!normalized) return "";
-  normalized = normalized.replace(/^QR[-]/, "QR:");
-  if (/^BIN-\d{3}$/.test(normalized)) {
-    return `QR:${normalized}`;
-  }
-  return normalized;
+  return normalizeProductionQrCode(value);
 }
 
 function parsePositiveInt(value) {
@@ -66,7 +56,7 @@ function isMachineCodeAllowedForStation(station, value) {
 }
 
 function isMachineFlowBasketQr(value) {
-  return MACHINE_FLOW_BASKET_QR_PATTERN.test(String(value || ""));
+  return isProductionQr(value);
 }
 
 const machineQrScannerState = {
@@ -602,10 +592,10 @@ export function bindMachineActions(renderApp) {
       if (!station || !inputId) return;
 
       const scanned = await openMachineQrScanner({
-        title: kind === "machine" ? "Scan machine" : "Scan basket",
+        title: kind === "machine" ? "Scan machine" : "Scan route sheet",
         subtitle: kind === "machine"
           ? "Point camera at machine QR"
-          : "Point camera at basket QR"
+          : "Point camera at route sheet QR"
       });
 
       if (!scanned) {
@@ -772,19 +762,19 @@ export function bindMachineActions(renderApp) {
       const qrCode = normalizeBasketQrCode(input?.value || draft.basketInput);
 
       if (!qrCode) {
-        await notifyAndRender(renderApp, "warn", "Scan basket QR first.");
+        await notifyAndRender(renderApp, "warn", "Scan route sheet QR first.");
         return;
       }
       if (!isMachineFlowBasketQr(qrCode)) {
-        await notifyAndRender(renderApp, "warn", "BIN basket QR is required in format QR:BIN-001.");
+        await notifyAndRender(renderApp, "warn", "Route sheet QR is required (QR:RS-001; legacy QR:BIN-001 still works).");
         return;
       }
       if (draft.stagedBasketQrs.includes(qrCode)) {
-        await notifyAndRender(renderApp, "warn", `Basket ${qrCode} is already added.`);
+        await notifyAndRender(renderApp, "warn", `Route sheet ${qrCode} is already added.`);
         return;
       }
       if (draft.stagedBasketQrs.length >= 1) {
-        await notifyAndRender(renderApp, "warn", "Only one basket is allowed per machine cycle.");
+        await notifyAndRender(renderApp, "warn", "Only one route sheet is allowed per machine cycle.");
         return;
       }
 
@@ -798,7 +788,7 @@ export function bindMachineActions(renderApp) {
         });
       } catch (error) {
         const level = Number(error?.status || 0) >= 500 ? "error" : "warn";
-        await notifyAndRender(renderApp, level, error?.message || "Basket validation failed.");
+        await notifyAndRender(renderApp, level, error?.message || "Route sheet validation failed.");
         focusById(inputId);
         return;
       }
@@ -832,7 +822,7 @@ export function bindMachineActions(renderApp) {
       const draft = getMachineDraft(station);
       draft.basketInput = "";
       draft.stagedBasketQrs = [];
-      await notifyAndRender(renderApp, "ok", "Basket cleared.");
+      await notifyAndRender(renderApp, "ok", "Route sheet cleared.");
       focusById(`machine-basket-input-${station}`);
     });
   });
@@ -862,15 +852,15 @@ export function bindMachineActions(renderApp) {
         return;
       }
       if (!basketQrs.length) {
-        await notifyAndRender(renderApp, "warn", "Add a basket to the cycle.");
+        await notifyAndRender(renderApp, "warn", "Add a route sheet to the cycle.");
         return;
       }
       if (!basketQrs.every((qrCode) => isMachineFlowBasketQr(qrCode))) {
-        await notifyAndRender(renderApp, "warn", "Only BIN basket QR is allowed in cycle (QR:BIN-001).");
+        await notifyAndRender(renderApp, "warn", "Only route sheet QR is allowed in cycle (QR:RS-001; legacy QR:BIN-001 still works).");
         return;
       }
       if (basketQrs.length > 1) {
-        await notifyAndRender(renderApp, "error", "Only one basket is allowed per machine cycle.");
+        await notifyAndRender(renderApp, "error", "Only one route sheet is allowed per machine cycle.");
         return;
       }
 
@@ -1062,11 +1052,11 @@ export function bindMachineActions(renderApp) {
       const input = inputId ? document.getElementById(inputId) : null;
       const basketQr = normalizeBasketQrCode(input?.value || draft.unloadBasketInput);
       if (!basketQr) {
-        await notifyAndRender(renderApp, "warn", "Scan basket QR to unload first.");
+        await notifyAndRender(renderApp, "warn", "Scan route sheet QR to unload first.");
         return;
       }
       if (!isMachineFlowBasketQr(basketQr)) {
-        await notifyAndRender(renderApp, "warn", "BIN basket QR is required for unload (QR:BIN-001).");
+        await notifyAndRender(renderApp, "warn", "Route sheet QR is required for unload (QR:RS-001; legacy QR:BIN-001 still works).");
         return;
       }
 
@@ -1074,7 +1064,7 @@ export function bindMachineActions(renderApp) {
         actionKey: `unload:${loadId}`,
         renderApp,
         successNotice: false,
-        errorNotice: "Failed to unload basket.",
+        errorNotice: "Failed to unload route sheet.",
         request: () => api(`/api/machines/loads/${loadId}/unload-basket`, {
           method: "POST",
           headers: {
@@ -1089,7 +1079,7 @@ export function bindMachineActions(renderApp) {
           clearUnloadAutoCloseTimer(station);
           clearUnloadSuccessState(draft);
           draft.unloadBasketInput = "";
-          draft.unloadSuccessChip = "Basket unloaded";
+          draft.unloadSuccessChip = "Route sheet unloaded";
           draft.unloadSuccessAt = Date.now();
           draft.flowMode = "unload";
           scheduleUnloadAutoClose(station, renderApp);

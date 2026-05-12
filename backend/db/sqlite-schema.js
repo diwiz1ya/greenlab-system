@@ -123,6 +123,21 @@ const SQLITE_BOOTSTRAP_SQL = `  PRAGMA busy_timeout = 3000;
     FOREIGN KEY(order_id) REFERENCES orders(id)
   );
 
+  CREATE TABLE IF NOT EXISTS ironing_sessions (
+    id INTEGER PRIMARY KEY,
+    order_id INTEGER NOT NULL,
+    basket_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    started_by TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_by TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(order_id) REFERENCES orders(id),
+    FOREIGN KEY(basket_id) REFERENCES baskets(id)
+  );
+
   CREATE TABLE IF NOT EXISTS rework_requests (
     id INTEGER PRIMARY KEY,
     order_id INTEGER NOT NULL,
@@ -358,6 +373,23 @@ function ensureSqliteSchema(db) {
   }
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS ironing_sessions (
+      id INTEGER PRIMARY KEY,
+      order_id INTEGER NOT NULL,
+      basket_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      started_by TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_by TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(order_id) REFERENCES orders(id),
+      FOREIGN KEY(basket_id) REFERENCES baskets(id)
+    );
+  `);
+
+  db.exec(`
     UPDATE orders
     SET ready_to_place = 0
     WHERE ready_to_place IS NULL;
@@ -372,6 +404,8 @@ function ensureSqliteSchema(db) {
   `);
 
   db.exec(`
+    DROP INDEX IF EXISTS idx_pickup_order_placements_active_location;
+
     CREATE INDEX IF NOT EXISTS idx_orders_status_ready
       ON orders (status, ready_for_pickup);
 
@@ -402,6 +436,16 @@ function ensureSqliteSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_scan_events_station_created
       ON scan_events (station, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_ironing_sessions_status_started
+      ON ironing_sessions (status, started_at DESC, id DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_ironing_sessions_basket_status
+      ON ironing_sessions (basket_id, status);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ironing_sessions_active_basket
+      ON ironing_sessions (basket_id)
+      WHERE status = 'active';
+
     CREATE INDEX IF NOT EXISTS idx_rework_requests_order_status
       ON rework_requests (order_id, request_status);
 
@@ -421,11 +465,9 @@ function ensureSqliteSchema(db) {
       ON pickup_order_placements (order_id, slot_index)
       WHERE released_at IS NULL;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_pickup_order_placements_active_bin
-      ON pickup_order_placements (bin_qr_code)
-      WHERE released_at IS NULL;
+    DROP INDEX IF EXISTS idx_pickup_order_placements_active_bin;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_pickup_order_placements_active_location
+    CREATE INDEX IF NOT EXISTS idx_pickup_order_placements_active_location
       ON pickup_order_placements (location_qr_code)
       WHERE released_at IS NULL;
   `);

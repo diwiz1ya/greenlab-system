@@ -5,6 +5,7 @@ import { bindMachineActions } from "./actions/machines.js";
 import { bindPickupActions } from "./actions/pickup.js";
 import { bindQcActions, openQcQrScanner, runQcInspectFromInput } from "./actions/qc.js";
 import { bindSortingActions } from "./actions/sorting.js";
+import { normalizeProductionQrCode } from "./route-sheets.js";
 import { escapeHtml } from "./utils.js";
 
 function setButtonLoading(button, isLoading, loadingText) {
@@ -49,13 +50,11 @@ function setScanUiBusy(station, inputId, isBusy) {
 }
 
 function normalizeSimpleCameraQrCode(value) {
-  let normalized = String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "");
+  const productionQr = normalizeProductionQrCode(value);
+  if (productionQr) return productionQr;
+  let normalized = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
   if (!normalized) return "";
   normalized = normalized.replace(/^QR[-]/, "QR:");
-  if (/^BIN-\d{3}$/.test(normalized)) return `QR:${normalized}`;
   if (/^B-\d{4,}-\d+$/.test(normalized)) return `QR:${normalized}`;
   return normalized;
 }
@@ -114,7 +113,7 @@ function scrollOrderModalSection(anchor, behavior = "smooth") {
   });
 }
 
-const inlineScanStations = new Set(["washing", "rework", "drying", "ironing"]);
+const inlineScanStations = new Set(["washing", "rework", "drying"]);
 
 function canUseInlineStationUpdate(station) {
   return inlineScanStations.has(station)
@@ -277,7 +276,7 @@ function refocusScanInput(inputId) {
 
 export async function runScanFromInput(station, inputId, renderApp) {
   const inlineUpdate = canUseInlineStationUpdate(station);
-  const suppressStationNotice = station === "pickup";
+  const suppressStationNotice = station === "pickup" || station === "ironing";
   const input = document.getElementById(inputId);
   if (!input) {
     setLastScan({ station, ok: false, code: "", message: "Scan input field not found." });
@@ -290,7 +289,8 @@ export async function runScanFromInput(station, inputId, renderApp) {
     await renderApp();
     return;
   }
-  const code = input.value.trim();
+  const code = normalizeSimpleCameraQrCode(input.value.trim()) || input.value.trim();
+  if (code) input.value = code;
   if (!code) {
     setLastScan({ station, ok: false, code: "", message: "Empty QR code." });
     if (inlineUpdate) {
@@ -547,7 +547,7 @@ export function bindGlobalActions(renderApp, renderLogin) {
 
       const scannedValue = await openQcQrScanner({
         title: `QR scanning · ${stationLabels[station] || station}`,
-        subtitle: "Point camera at basket QR"
+        subtitle: "Point camera at route sheet QR"
       });
       if (!scannedValue) {
         return;

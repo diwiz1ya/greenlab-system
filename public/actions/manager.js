@@ -385,7 +385,7 @@ function buildShiftSummaryReport(orders, range) {
       ["In production", productionCount],
       ["Pending approval", approvalCount],
       ["HOLD", holdCount],
-      ["Ready for pickup", readyCount],
+      ["Ready for handoff", readyCount],
       ["Issued (archive)", issuedCount],
       ["SLA risk (approval + handoff)", approvalOverdueCount + transferOverdueCount],
       ["Stalled >2h", stalledCount]
@@ -669,12 +669,12 @@ function buildCompletePickupDialog(button) {
     kind: "complete-pickup",
     orderId,
     orderPublicId,
-    eyebrow: "Pickup",
-    title: "Confirm pickup",
+    eyebrow: "Handoff",
+    title: "Confirm handoff",
     body: orderPublicId
       ? `Order ${orderPublicId} will be marked as issued.`
       : "Order will be marked as issued.",
-    detail: "After confirmation, baskets and storage locations are released. Order status syncs to CleanCloud as completed.",
+    detail: "After confirmation, route sheets and storage locations are released. Order status syncs to CleanCloud as completed.",
     footer: "This action runs immediately and is recorded in the order log.",
     confirmLabel: "Issued",
     tone: "neutral"
@@ -725,7 +725,7 @@ async function executeManagerAction(dialog) {
       method: "POST",
       body: JSON.stringify({ orderId: dialog.orderId })
     });
-    return { result, notice: "Pickup confirmed: baskets and locations released." };
+    return { result, notice: "Handoff confirmed: route sheets and locations released." };
   }
 
   if (dialog.kind === "approve-rework") {

@@ -1,4 +1,4 @@
-import { escapeHtml } from "../utils.js";
+import { escapeHtml, renderCameraIconButton } from "../utils.js";
 
 const qcReasonOptions = [
   { value: "stain_not_removed", label: "Stain not removed" },
@@ -1038,7 +1038,7 @@ function renderQcTransferDrawer(tasks, panelOpen, pendingRequestId = null, trans
                           <span class="pill warn">Return to flow</span>
                         </div>
                         <div class="qc-transfer-task-mini muted">
-                          ${escapeHtml(sourceQrLabel || "Source basket QR is missing")}
+                          ${escapeHtml(sourceQrLabel || "Source route sheet QR is missing")}
                           ${decisionStamp ? ` · ${escapeHtml(`manager decision ${decisionStamp}`)}` : ""}
                         </div>
                         ${
@@ -1087,13 +1087,13 @@ function renderQcTransferDrawer(tasks, panelOpen, pendingRequestId = null, trans
                         <div class="qc-transfer-route-point">
                           <span class="qc-section-label">From</span>
                           <strong>${escapeHtml(sourceLabel)}</strong>
-                          <span class="muted">${escapeHtml(sourceQrLabel || "Source basket QR")}</span>
+                          <span class="muted">${escapeHtml(sourceQrLabel || "Source route sheet QR")}</span>
                         </div>
                         <span class="qc-transfer-route-arrow" aria-hidden="true">→</span>
                         <div class="qc-transfer-route-point">
                           <span class="qc-section-label">To</span>
                           <strong>${escapeHtml(reworkLabel)}</strong>
-                          <span class="muted">${escapeHtml(reworkQrLabel || "RW basket QR")}</span>
+                          <span class="muted">${escapeHtml(reworkQrLabel || "RW route sheet QR")}</span>
                         </div>
                       </div>
                       <div class="qc-transfer-task-hint">
@@ -1112,7 +1112,7 @@ function renderQcTransferDrawer(tasks, panelOpen, pendingRequestId = null, trans
                             class="qc-transfer-scan-input"
                             data-qc-transfer-source-input="${requestId}"
                             data-qc-transfer-expected-source="${escapeHtml(sourceQrLabel)}"
-                            placeholder="${escapeHtml(sourceQrLabel || "Source basket QR")}"
+                            placeholder="${escapeHtml(sourceQrLabel || "Source route sheet QR")}"
                             value="${escapeHtml(transferDraft.sourceQrCode)}"
                             autocomplete="off"
                             spellcheck="false"
@@ -1129,7 +1129,7 @@ function renderQcTransferDrawer(tasks, panelOpen, pendingRequestId = null, trans
                             class="qc-transfer-scan-input"
                             data-qc-transfer-target-input="${requestId}"
                             data-qc-transfer-expected-target="${escapeHtml(reworkQrLabel)}"
-                            placeholder="${escapeHtml(reworkQrLabel || "Target basket QR")}"
+                            placeholder="${escapeHtml(reworkQrLabel || "Target route sheet QR")}"
                             value="${escapeHtml(transferDraft.targetQrCode)}"
                             autocomplete="off"
                             spellcheck="false"
@@ -1242,32 +1242,30 @@ function renderQcScanPanel(lastScan, submittingQcDecision, hasInspection) {
       <div class="qc-panel-head">
         <div>
           <div class="qc-section-label">Scan</div>
-          <h3>${hasInspection ? "Next basket" : "Scan basket"}</h3>
-          <p class="muted">QR opens basket card automatically.</p>
+          <h3>${hasInspection ? "Next route sheet" : "Scan route sheet"}</h3>
+          <p class="muted">QR opens the route sheet card automatically.</p>
         </div>
       </div>
       <div class="qc-scan-form">
-        <input
-          class="scan-large qc-command-input"
-          id="simple-scan-input"
-          data-scan-input-for="qc"
-          data-qc-auto-submit="1"
-          placeholder="QR:BIN-001"
-          autocomplete="off"
-          spellcheck="false"
-          ${submittingQcDecision ? "disabled" : ""}
-        />
-        <div class="qc-scan-actions">
-          <button
-            type="button"
-            class="secondary qc-scan-camera"
-            data-qc-open-camera
-            data-qc-camera-input-id="simple-scan-input"
+        <span class="qr-camera-input-wrap">
+          <input
+            class="scan-large qc-command-input"
+            id="simple-scan-input"
+            data-scan-input-for="qc"
+            data-qc-auto-submit="1"
+            placeholder="QR:RS-001"
+            autocomplete="off"
+            spellcheck="false"
             ${submittingQcDecision ? "disabled" : ""}
-          >
-            Open camera
-          </button>
-        </div>
+          />
+          ${renderCameraIconButton({
+            disabled: submittingQcDecision,
+            attributes: {
+              "data-qc-open-camera": "",
+              "data-qc-camera-input-id": "simple-scan-input"
+            }
+          })}
+        </span>
       </div>
       ${renderQcScanStatus(lastScan, "qc")}
     </section>

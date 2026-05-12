@@ -1,4 +1,4 @@
-import { escapeHtml } from "../utils.js";
+import { escapeHtml, renderCameraIconButton } from "../utils.js";
 
 function getOrderProgress(order) {
   const total = Number(order?.total_order_baskets || order?.total_baskets || 0);
@@ -11,9 +11,51 @@ function getOrderProgress(order) {
 }
 
 function getOrderStageLabel(order) {
-  if (order?.ready_for_pickup) return "Ready for pickup";
+  if (order?.ready_for_pickup) return "Ready for handoff";
+  if (Array.isArray(order?.placements) && order.placements.length) return "In storage";
   if (order?.ready_to_place) return "Ready to place";
   return "Assembly";
+}
+
+function getPlacedBinSet(order) {
+  return new Set((Array.isArray(order?.placements) ? order.placements : [])
+    .map((placement) => String(placement?.bin_qr_code || "").trim())
+    .filter(Boolean));
+}
+
+function getDefaultPlacementLocation(order) {
+  const placement = (Array.isArray(order?.placements) ? order.placements : [])
+    .find((row) => String(row?.location_qr_code || "").trim());
+  return String(placement?.location_qr_code || "").trim();
+}
+
+function getPlaceableBaskets(order) {
+  return (Array.isArray(order?.baskets) ? order.baskets : [])
+    .filter((basket) => basket?.scanned);
+}
+
+function renderPlaceOrderButton(order) {
+  const placeableBaskets = getPlaceableBaskets(order);
+  if (!placeableBaskets.length || order?.ready_for_pickup || getDefaultPlacementLocation(order)) return "";
+  const location = getDefaultPlacementLocation(order);
+  return `
+    <button
+      type="button"
+      class="secondary pickup-place-now-button"
+      data-pickup-place-order="${Number(order?.id || 0)}"
+      data-pickup-place-location="${escapeHtml(location)}"
+    >Assign location</button>
+  `;
+}
+
+function renderConfirmAssemblyButton(order) {
+  const progress = getOrderProgress(order);
+  if (order?.ready_for_pickup || !getDefaultPlacementLocation(order) || progress.remaining > 0) return "";
+  return `
+    <button type="button" class="pickup-place-now-button" data-pickup-confirm-assembled="${Number(order?.id || 0)}">
+      Confirm assembled
+    </button>
+  `;
 }
 
 function renderPickupScanStatus(lastScan) {
@@ -21,7 +63,7 @@ function renderPickupScanStatus(lastScan) {
     return `
       <section class="scan-status idle" data-scan-status="pickup">
         <strong>Waiting</strong>
-        <div class="muted">Scan BIN basket.</div>
+        <div class="muted">Scan route sheet.</div>
       </section>
     `;
   }
@@ -42,7 +84,7 @@ function renderModeSwitch(mode, assemblyCount, readyToPlaceCount, placedCount, d
   const isAssembly = mode !== "placement";
   void placedCount;
   return `
-    <div class="pickup-mode-switch" role="tablist" aria-label="Pickup stage mode">
+    <div class="pickup-mode-switch" role="tablist" aria-label="Dispatch stage mode">
       <button
         type="button"
         class="pickup-mode-button ${isAssembly ? "is-active" : ""}"
@@ -60,7 +102,7 @@ function renderModeSwitch(mode, assemblyCount, readyToPlaceCount, placedCount, d
         ${disablePlacement ? "disabled" : ""}
       >
         <span class="pickup-mode-button-title">Placement</span>
-        <span class="pickup-mode-button-meta">${escapeHtml(`Ready to place: ${readyToPlaceCount}`)}</span>
+        <span class="pickup-mode-button-meta">${escapeHtml(`Open tasks: ${readyToPlaceCount}`)}</span>
       </button>
     </div>
   `;
@@ -78,7 +120,7 @@ function renderAssemblyCompletionPrompt(prompt) {
     <section class="notice ok pickup-assembly-banner">
       <div class="pickup-assembly-banner-copy">
         <strong>${escapeHtml(`${publicId} is assembled`)}</strong>
-        <div>${escapeHtml(`${customerName} · Accepted ${scanned}/${total}. Open Placement when you are ready to assign storage.`)}</div>
+        <div>${escapeHtml(`${customerName} · Accepted ${scanned}/${total}. Open Placement when you are ready to assign a location.`)}</div>
       </div>
       <button type="button" class="pickup-assembly-banner-action" data-pickup-assembly-ack>OK</button>
     </section>
@@ -99,6 +141,9 @@ function renderOrderCard(order, activeOrderId, actions = "") {
       </div>
       <div class="pickup-order-meta-row muted">
         <span>${escapeHtml(`Accepted: ${progress.scanned}/${progress.total}`)}</span>
+        ${Array.isArray(order.placements) && order.placements.length
+          ? `<span>${escapeHtml(`Placed: ${order.placements.length}`)}</span>`
+          : ""}
       </div>
       ${actions ? `<div class="action-row pickup-actions">${actions}</div>` : ""}
     </article>
@@ -125,7 +170,7 @@ function renderAssemblyCompactCard(order) {
           <strong>${escapeHtml(order.public_id || "—")}</strong>
           <span class="muted pickup-compact-customer">${escapeHtml(order.customer_name || "Customer not specified")}</span>
         </div>
-        <span class="pill ${order.ready_to_place ? "ok" : "warn"}">${escapeHtml(order.ready_to_place ? "Ready to place" : "Assembly")}</span>
+        <span class="pill ${order.ready_to_place ? "ok" : "warn"}">${escapeHtml(getOrderStageLabel(order))}</span>
       </div>
       <div class="pickup-compact-progress">
         <div class="pickup-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}">
@@ -133,6 +178,11 @@ function renderAssemblyCompactCard(order) {
         </div>
         <span class="muted">${escapeHtml(`${progress.scanned}/${progress.total}`)}</span>
       </div>
+      ${getDefaultPlacementLocation(order)
+        ? `<div class="pickup-active-order-meta">${escapeHtml(`Location: ${getDefaultPlacementLocation(order)}`)}</div>`
+        : ""}
+      ${renderPlaceOrderButton(order)}
+      ${renderConfirmAssemblyButton(order)}
     </article>
   `;
 }
@@ -149,38 +199,12 @@ function isAssemblyOrderStarted(order) {
 }
 
 function renderActiveAssemblyCard(order) {
-  if (!order) {
-    return `
-      <section class="pickup-active-order empty">
-        <strong>No order selected</strong>
-        <div class="muted">Scan any BIN basket. The card will show the order from the latest scan.</div>
-      </section>
-    `;
-  }
-
-  const progress = getOrderProgress(order);
-  return `
-    <section class="pickup-active-order">
-      <div class="pickup-active-order-head">
-        <div>
-          <span class="qc-section-label">Current order</span>
-          <strong>${escapeHtml(order.public_id)}</strong>
-          <div class="muted">${escapeHtml(order.customer_name || "Customer")}</div>
-        </div>
-        <span class="pill ${order.ready_to_place ? "ok" : "warn"}">${escapeHtml(order.ready_to_place ? "Ready to place" : "Assembly")}</span>
-      </div>
-      <div class="pickup-active-progress">
-        <span class="pill ${progress.remaining === 0 ? "ok" : "warn"}">${escapeHtml(`Accepted ${progress.scanned}/${progress.total}`)}</span>
-      </div>
-      ${order.ready_to_place
-        ? `<div class="pickup-active-order-meta">Order kit is assembled.</div>`
-        : ""}
-    </section>
-  `;
+  void order;
+  return "";
 }
 
 function renderAssemblyMode(assemblyOrders, activeOrder, lastScan) {
-  const scanPlaceholder = "QR:BIN-001";
+  const scanPlaceholder = "QR:RS-001";
   const startedAssemblyOrders = Array.isArray(assemblyOrders)
     ? assemblyOrders.filter(isAssemblyOrderStarted)
     : [];
@@ -190,16 +214,21 @@ function renderAssemblyMode(assemblyOrders, activeOrder, lastScan) {
         ${renderActiveAssemblyCard(activeOrder)}
         <div class="pickup-flow">
           <label class="pickup-scan-label">
-            BIN basket QR
-            <input
-              id="pickup-scan-input"
-              data-scan-input-for="pickup"
-              placeholder="${escapeHtml(scanPlaceholder)}"
-            />
+            Route sheet QR
+            <span class="qr-camera-input-wrap">
+              <input
+                id="pickup-scan-input"
+                data-scan-input-for="pickup"
+                placeholder="${escapeHtml(scanPlaceholder)}"
+              />
+              ${renderCameraIconButton({
+                attributes: {
+                  "data-open-simple-camera": "pickup",
+                  "data-simple-camera-input-id": "pickup-scan-input"
+                }
+              })}
+            </span>
           </label>
-          <div class="action-row pickup-scan-actions">
-            <button data-open-simple-camera="pickup" data-simple-camera-input-id="pickup-scan-input">Open camera</button>
-          </div>
           ${renderPickupScanStatus(lastScan)}
         </div>
       </section>
@@ -223,62 +252,23 @@ function renderAssemblyMode(assemblyOrders, activeOrder, lastScan) {
   `;
 }
 
-function getPlacementStepState(containerCount, placements) {
-  const totalSteps = containerCount * 2;
-  for (let index = 0; index < containerCount; index += 1) {
-    const row = placements[index] || {};
-    const binQr = String(row.binQr || "").trim();
-    const locationQr = String(row.locationQr || "").trim();
-    if (!binQr) {
-      return {
-        key: "scan-bin",
-        slotIndex: index,
-        step: (index * 2) + 1,
-        totalSteps
-      };
-    }
-    if (!locationQr) {
-      return {
-        key: "scan-loc",
-        slotIndex: index,
-        step: (index * 2) + 2,
-        totalSteps
-      };
-    }
+function getPlacementStepState(placements) {
+  const row = placements[0] || {};
+  const locationQr = String(row.locationQr || "").trim();
+  if (!locationQr) {
+    return {
+      key: "scan-loc",
+      slotIndex: 0,
+      step: 1,
+      totalSteps: 1
+    };
   }
   return {
     key: "done",
-    slotIndex: containerCount - 1,
-    step: totalSteps,
-    totalSteps
+    slotIndex: 0,
+    step: 1,
+    totalSteps: 1
   };
-}
-
-function buildPlacementStepItems(containerCount, placements) {
-  const steps = [];
-  for (let index = 0; index < containerCount; index += 1) {
-    const row = placements[index] || {};
-    steps.push({
-      key: "binQr",
-      slotIndex: index,
-      label: `${index + 1} BIN`,
-      value: String(row.binQr || "").trim()
-    });
-    steps.push({
-      key: "locationQr",
-      slotIndex: index,
-      label: `${index + 1} LOC`,
-      value: String(row.locationQr || "").trim()
-    });
-  }
-
-  const currentIndex = steps.findIndex((step) => !step.value);
-  const activeIndex = currentIndex >= 0 ? currentIndex : steps.length - 1;
-  return steps.map((step, index) => ({
-    ...step,
-    done: Boolean(step.value),
-    active: index === activeIndex
-  }));
 }
 
 function renderPlacementFeedback(feedback) {
@@ -298,14 +288,23 @@ function renderPlacementReadyList(orders, selectedOrderId) {
     const ratio = progress.total > 0 ? Math.min(1, progress.scanned / progress.total) : 0;
     const percent = Math.round(ratio * 100);
     const isSelected = Number(selectedOrderId || 0) === Number(order.id);
+    const placeableBaskets = getPlaceableBaskets(order);
+    const binList = placeableBaskets.map((basket) => String(basket.qr_code || "").trim()).filter(Boolean).join(",");
+    const location = getDefaultPlacementLocation(order);
     return `
-      <button type="button" class="card pickup-place-order-select ${isSelected ? "active" : ""}" data-pickup-place-order="${order.id}">
+      <button
+        type="button"
+        class="card pickup-place-order-select ${isSelected ? "active" : ""}"
+        data-pickup-place-order="${order.id}"
+        data-pickup-place-bins="${escapeHtml(binList)}"
+        data-pickup-place-location="${escapeHtml(location)}"
+      >
         <div class="pickup-place-order-head">
           <div class="pickup-compact-title">
             <strong>${escapeHtml(order.public_id || "—")}</strong>
             <span class="muted pickup-compact-customer">${escapeHtml(order.customer_name || "Customer not specified")}</span>
           </div>
-          <span class="pill warn">Ready to place</span>
+          <span class="pill warn">${escapeHtml(location ? "In location" : "Needs location")}</span>
         </div>
         <div class="pickup-compact-progress">
           <div class="pickup-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}">
@@ -314,8 +313,8 @@ function renderPlacementReadyList(orders, selectedOrderId) {
           <span class="muted">${escapeHtml(`${progress.scanned}/${progress.total}`)}</span>
         </div>
         <div class="pickup-place-order-action-row">
-          <span class="pickup-place-order-action-label">${isSelected ? "Selected" : "Open placement"}</span>
-          <span class="pickup-place-order-action-cta">${isSelected ? "Continue" : "Open"}</span>
+          <span class="pickup-place-order-action-label">${isSelected ? "Selected" : (location ? "Open location" : "Open placement")}</span>
+          <span class="pickup-place-order-action-cta">${isSelected ? "Continue" : (location && progress.remaining <= 0 ? "Confirm" : "Open")}</span>
         </div>
       </button>
     `;
@@ -323,90 +322,87 @@ function renderPlacementReadyList(orders, selectedOrderId) {
 }
 
 function renderPlacementFlow(selectedOrder, draft, submittingPlacement) {
-  const containerCount = Number(draft?.containerCount || 1) === 2 ? 2 : 1;
+  const existingLocation = getDefaultPlacementLocation(selectedOrder);
+  const selectedProgress = getOrderProgress(selectedOrder);
+  if (existingLocation) {
+    const canConfirm = !selectedOrder?.ready_for_pickup && selectedProgress.remaining <= 0;
+    return `
+      <div class="pickup-placement-modal-head">
+        <div class="pickup-placement-order-head">
+          <strong>${escapeHtml(selectedOrder.public_id || "—")}</strong>
+          <div class="muted">${escapeHtml(selectedOrder.customer_name || "Customer")}</div>
+        </div>
+        <button type="button" class="ghost" data-pickup-place-close ${submittingPlacement ? "disabled" : ""}>Close</button>
+      </div>
+      <div class="pickup-placement-modal-body">
+        <section class="pickup-placement-step-card">
+          <div class="pickup-placement-step-head">
+            <strong>${escapeHtml(canConfirm ? "Confirm assembled" : "Location assigned")}</strong>
+            <span class="pickup-placement-step-badge">${escapeHtml(`${selectedProgress.scanned}/${selectedProgress.total}`)}</span>
+          </div>
+          <div class="muted">
+            ${escapeHtml(canConfirm
+              ? "Move the last items to this location, then confirm the order is assembled."
+              : "Use this same LOC for the remaining route sheets.")}
+          </div>
+          <div class="pickup-placement-preview">
+            <div class="pickup-placement-preview-row">
+              <code>${escapeHtml(existingLocation)}</code>
+            </div>
+          </div>
+        </section>
+        <div class="pickup-placement-footer">
+          ${canConfirm
+            ? `<button type="button" class="pickup-placement-submit" data-pickup-confirm-assembled="${Number(selectedOrder?.id || 0)}" ${submittingPlacement ? "disabled" : ""}>Confirm assembled</button>`
+            : ""}
+        </div>
+      </div>
+    `;
+  }
+
   const placements = Array.isArray(draft?.placements) ? draft.placements : [];
-  const stepState = getPlacementStepState(containerCount, placements);
-  const stepItems = buildPlacementStepItems(containerCount, placements);
+  const stepState = getPlacementStepState(placements);
   const feedback = draft?.feedback || null;
-  const currentRow = placements[stepState.slotIndex] || { binQr: "", locationQr: "" };
-  const isReadyToSubmit = Boolean(selectedOrder) && stepState.key === "done";
-  const hasAnyPlacementData = placements.some((row) => String(row?.binQr || "").trim() || String(row?.locationQr || "").trim());
+  const currentRow = placements[stepState.slotIndex] || { locationQr: "" };
+  const hasAnyPlacementData = placements.some((row) => String(row?.locationQr || "").trim());
 
   let stepBody = "";
   let primaryAction = "";
   let helperNote = "";
 
-  if (stepState.key === "scan-bin") {
-    helperNote = `Scan BIN basket ${stepState.slotIndex + 1} first.`;
-    stepBody = `
-      <section class="pickup-placement-step-card">
-        <div class="pickup-placement-step-head">
-          <strong>Scan BIN basket</strong>
-          <span class="pickup-placement-step-badge">${escapeHtml(`${stepState.step}/${stepState.totalSteps}`)}</span>
-        </div>
-        <div class="muted">${escapeHtml(`Empty basket ${stepState.slotIndex + 1} of ${containerCount}.`)}</div>
-        <label>
-          BIN QR
-          <input
-            type="text"
-            value="${escapeHtml(String(currentRow.binQr || ""))}"
-            placeholder="QR:BIN-001"
-            data-pickup-placement-input="binQr"
-            data-slot-index="${stepState.slotIndex}"
-            data-pickup-placement-active="true"
-            ${submittingPlacement ? "disabled" : ""}
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-        <div class="action-row pickup-placement-step-actions">
-          <button
-            type="button"
-            class="secondary"
-            data-pickup-placement-open-camera
-            data-slot-index="${stepState.slotIndex}"
-            data-pickup-placement-field="binQr"
-            ${submittingPlacement ? "disabled" : ""}
-          >Open camera</button>
-        </div>
-      </section>
-    `;
-  } else if (stepState.key === "scan-loc") {
-    helperNote = `Now scan LOC storage for basket ${stepState.slotIndex + 1}.`;
+  if (stepState.key === "scan-loc") {
+    helperNote = "Scan the shelf/location where this order will stay.";
     stepBody = `
       <section class="pickup-placement-step-card">
         <div class="pickup-placement-step-head">
           <strong>Scan storage location</strong>
           <span class="pickup-placement-step-badge">${escapeHtml(`${stepState.step}/${stepState.totalSteps}`)}</span>
         </div>
-        <div class="pickup-placement-current-bin">
-          <span class="muted">BIN:</span>
-          <code>${escapeHtml(String(currentRow.binQr || "—"))}</code>
-        </div>
+        <div class="muted">Scan the LOC QR where this order will stay.</div>
         <label>
           LOC QR
-          <input
-            type="text"
-            value="${escapeHtml(String(currentRow.locationQr || ""))}"
-            placeholder="QR:LOC-A01"
-            data-pickup-placement-input="locationQr"
-            data-slot-index="${stepState.slotIndex}"
-            data-pickup-placement-active="true"
-            ${submittingPlacement ? "disabled" : ""}
-            autocomplete="off"
-            spellcheck="false"
-          />
+          <span class="qr-camera-input-wrap">
+            <input
+              type="text"
+              value="${escapeHtml(String(currentRow.locationQr || ""))}"
+              placeholder="QR:LOC-A01"
+              data-pickup-placement-input="locationQr"
+              data-slot-index="${stepState.slotIndex}"
+              data-pickup-placement-active="true"
+              ${submittingPlacement ? "disabled" : ""}
+              autocomplete="off"
+              spellcheck="false"
+            />
+            ${renderCameraIconButton({
+              disabled: submittingPlacement,
+              attributes: {
+                "data-pickup-placement-open-camera": "",
+                "data-slot-index": stepState.slotIndex,
+                "data-pickup-placement-field": "locationQr"
+              }
+            })}
+          </span>
         </label>
-        <div class="action-row pickup-placement-step-actions">
-          <button
-            type="button"
-            class="secondary"
-            data-pickup-placement-open-camera
-            data-slot-index="${stepState.slotIndex}"
-            data-pickup-placement-field="locationQr"
-            ${submittingPlacement ? "disabled" : ""}
-          >Open camera</button>
-        </div>
       </section>
     `;
   } else {
@@ -421,18 +417,11 @@ function renderPlacementFlow(selectedOrder, draft, submittingPlacement) {
           <strong>Ready to assign</strong>
           <span class="pickup-placement-step-badge">${escapeHtml(`${stepState.totalSteps}/${stepState.totalSteps}`)}</span>
         </div>
-        <div class="muted">BIN -> LOC pairs are filled. Confirm placement.</div>
+        <div class="muted">LOC is filled. Confirm placement.</div>
         <div class="pickup-placement-preview">
-          ${Array.from({ length: containerCount }).map((_, index) => {
-            const row = placements[index] || {};
-            return `
-              <div class="pickup-placement-preview-row">
-                <code>${escapeHtml(String(row.binQr || "QR:BIN-???"))}</code>
-                <span>→</span>
-                <code>${escapeHtml(String(row.locationQr || "QR:LOC-???"))}</code>
-              </div>
-            `;
-          }).join("")}
+          <div class="pickup-placement-preview-row">
+            <code>${escapeHtml(String(placements[0]?.locationQr || "QR:LOC-???"))}</code>
+          </div>
         </div>
       </section>
     `;
@@ -447,33 +436,6 @@ function renderPlacementFlow(selectedOrder, draft, submittingPlacement) {
       <button type="button" class="ghost" data-pickup-place-close ${submittingPlacement ? "disabled" : ""}>Close</button>
     </div>
     <div class="pickup-placement-modal-body">
-      <div class="pickup-placement-topbar">
-        <div class="pickup-placement-count">
-          <span class="muted pickup-placement-count-label">Baskets</span>
-        </div>
-        <div class="pickup-count-chips">
-          <button
-            type="button"
-            class="ghost pickup-count-chip ${containerCount === 1 ? "active" : ""}"
-            data-pickup-container-count="1"
-            ${submittingPlacement ? "disabled" : ""}
-          >1</button>
-          <button
-            type="button"
-            class="ghost pickup-count-chip ${containerCount === 2 ? "active" : ""}"
-            data-pickup-container-count="2"
-            ${submittingPlacement ? "disabled" : ""}
-          >2</button>
-        </div>
-      </div>
-      <div class="pickup-placement-stepper" role="list" aria-label="Placement steps">
-        ${stepItems.map((step) => `
-          <div class="pickup-placement-step-item ${step.done ? "is-done" : ""} ${step.active ? "is-active" : ""}" role="listitem">
-            <span class="pickup-placement-step-marker">${step.done ? "✓" : "•"}</span>
-            <span>${escapeHtml(step.label)}</span>
-          </div>
-        `).join('<span class="pickup-placement-step-arrow" aria-hidden="true">→</span>')}
-      </div>
       ${stepBody}
       ${renderPlacementFeedback(feedback)}
       <div class="pickup-placement-footer">
@@ -508,7 +470,7 @@ function renderPlacementMode(readyToPlaceOrders, placedOrders, placementDraft, s
       <section class="pickup-orders-column">
         <div class="pickup-orders-group">
           <div class="pickup-orders-header">
-            <strong>Ready to place</strong>
+            <strong>Location tasks</strong>
             <span class="muted">${escapeHtml(String(readyToPlaceOrders.length))}</span>
           </div>
           <div class="pickup-orders-list">
@@ -546,31 +508,35 @@ export function renderPickup(
         orderId: null,
         containerCount: 1,
         placements: [
-          { binQr: "", locationQr: "" },
-          { binQr: "", locationQr: "" }
+          { locationQr: "" }
         ],
         feedback: null
       };
 
+  const placeableAssemblyOrders = safeAssemblyOrders.filter((order) => getPlaceableBaskets(order).length > 0 && !getDefaultPlacementLocation(order));
+  const placementOrdersById = new Map();
+  [...safeReadyToPlaceOrders, ...placeableAssemblyOrders].forEach((order) => placementOrdersById.set(Number(order.id), order));
+  const placementOrders = Array.from(placementOrdersById.values());
+
   const visiblePickupOrders = safeMode === "assembly"
     ? safeAssemblyOrders
-    : safeReadyToPlaceOrders;
+    : placementOrders;
   const activeOrder = visiblePickupOrders.find((order) => Number(order.id) === Number(activeOrderId || 0)) || null;
 
   return `
     <section class="panel stack pickup-workbench">
       <div class="pickup-head">
-        ${renderModeSwitch(safeMode, startedAssemblyOrders.length, safeReadyToPlaceOrders.length, safePlacedOrders.length, hasPendingAssemblyPrompt)}
+        ${renderModeSwitch(safeMode, startedAssemblyOrders.length, placementOrders.length, safePlacedOrders.length, hasPendingAssemblyPrompt)}
         <div class="muted pickup-head-subtitle">
           ${safeMode === "assembly"
-            ? "Assembly: scan BIN baskets in any order. Orders are assembled automatically."
-            : "Placement: choose an order and bind BIN -> LOC pairs."}
+            ? "Assembly: scan route sheets in any order. Assign a LOC as soon as the order needs storage."
+            : "Placement: assign accepted route sheets to a LOC. Full handoff unlocks only when the whole order is accepted and placed."}
         </div>
       </div>
       ${renderAssemblyCompletionPrompt(assemblyCompletionPrompt)}
       ${safeMode === "assembly"
         ? renderAssemblyMode(safeAssemblyOrders, activeOrder, lastScan)
-        : renderPlacementMode(safeReadyToPlaceOrders, safePlacedOrders, safeDraft, submittingPlacement)}
+        : renderPlacementMode(placementOrders, safePlacedOrders, safeDraft, submittingPlacement)}
     </section>
   `;
 }

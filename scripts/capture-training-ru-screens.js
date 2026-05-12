@@ -364,7 +364,7 @@ async function captureIroningScreen(browser) {
   });
 }
 
-async function capturePickupScreens(browser, basketQrCode) {
+async function capturePickupScreens(browser) {
   await withRolePage(browser, "pickup", async (page) => {
     await page.waitForSelector("[data-pickup-mode='assembly']", { timeout: 20000 });
     await captureFull(page, "20-pickup-assembly.png");
@@ -376,15 +376,7 @@ async function capturePickupScreens(browser, basketQrCode) {
     const selectOrderButton = page.locator("[data-pickup-place-order]").first();
     if (await selectOrderButton.count()) {
       await selectOrderButton.click();
-      await captureElement(page, ".pickup-placement-modal-sheet", "22-pickup-placement-modal-bin-step.png");
-
-      const activeBinInput = page.locator("[data-pickup-placement-input='binQr'][data-pickup-placement-active='true']").first();
-      if (await activeBinInput.count()) {
-        await activeBinInput.fill(basketQrCode);
-        await activeBinInput.press("Enter");
-      }
-      await page.waitForTimeout(250);
-      await captureElement(page, ".pickup-placement-modal-sheet", "23-pickup-placement-modal-loc-step.png");
+      await captureElement(page, ".pickup-placement-modal-sheet", "22-pickup-placement-modal-loc-step.png");
 
       const activeLocInput = page.locator("[data-pickup-placement-input='locationQr'][data-pickup-placement-active='true']").first();
       if (await activeLocInput.count()) {
@@ -392,13 +384,13 @@ async function capturePickupScreens(browser, basketQrCode) {
         await activeLocInput.press("Enter");
       }
       await page.waitForTimeout(280);
-      await captureElement(page, ".pickup-placement-modal-sheet", "24-pickup-placement-modal-ready.png");
+      await captureElement(page, ".pickup-placement-modal-sheet", "23-pickup-placement-modal-ready.png");
 
       const submitButton = page.locator("[data-pickup-place-submit]").first();
       if (await submitButton.count()) {
         await submitButton.click();
         await page.waitForTimeout(900);
-        await captureFull(page, "25-pickup-after-placement.png");
+        await captureFull(page, "24-pickup-after-placement.png");
       }
     }
   });
@@ -513,7 +505,7 @@ async function run() {
     await scanAtStation(tokens, "ironing", scenario.qrB);
     await scanAtStation(tokens, "pickup", scenario.qrB);
 
-    await capturePickupScreens(browser, scenario.qrB);
+    await capturePickupScreens(browser);
     await captureManagerScreens(browser);
   } finally {
     await browser.close();

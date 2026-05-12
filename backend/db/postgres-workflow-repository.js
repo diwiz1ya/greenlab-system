@@ -327,6 +327,68 @@ function createPostgresWorkflowRepository(queryable) {
     return changes(insertResult);
   }
 
+  async function findActiveIroningSessionByBasketId(basketId) {
+    const result = await queryable.query(
+      `
+        SELECT id, order_id, basket_id, status, started_by, started_at, completed_by, completed_at
+        FROM ironing_sessions
+        WHERE basket_id = $1
+          AND status = 'active'
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+      `,
+      [basketId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async function insertIroningSession({ orderId, basketId, actor, timestamp }) {
+    const result = await queryable.query(
+      `
+        INSERT INTO ironing_sessions (
+          order_id, basket_id, status, started_by, started_at, created_at, updated_at
+        ) VALUES ($1, $2, 'active', $3, $4, $5, $6)
+        RETURNING id
+      `,
+      [orderId, basketId, actor, timestamp, timestamp, timestamp]
+    );
+    return insertedResult(result, "ironing session");
+  }
+
+  async function completeIroningSession({ sessionId, actor, timestamp }) {
+    const result = await queryable.query(
+      `
+        UPDATE ironing_sessions
+        SET status = 'completed', completed_by = $1, completed_at = $2, updated_at = $3
+        WHERE id = $4
+          AND status = 'active'
+      `,
+      [actor, timestamp, timestamp, sessionId]
+    );
+    return changes(result);
+  }
+
+  async function listActiveIroningSessions() {
+    const result = await queryable.query(`
+      SELECT
+        s.id,
+        s.order_id,
+        s.basket_id,
+        s.started_by,
+        s.started_at,
+        b.basket_code,
+        b.qr_code,
+        b.basket_type,
+        o.public_id
+      FROM ironing_sessions s
+      JOIN baskets b ON b.id = s.basket_id
+      JOIN orders o ON o.id = s.order_id
+      WHERE s.status = 'active'
+      ORDER BY s.started_at ASC, s.id ASC
+    `);
+    return result.rows;
+  }
+
   async function getMachineLoadById(loadId) {
     const result = await queryable.query(
       `
@@ -658,18 +720,11 @@ function createPostgresWorkflowRepository(queryable) {
   async function findActiveBasketByQrForPickupPlacement(qrCode) {
     const result = await queryable.query(
       `
-        SELECT b.id, b.station, o.public_id
+        SELECT b.id, b.order_id, b.station, b.status, o.public_id
         FROM baskets b
         JOIN orders o ON o.id = b.order_id
         WHERE b.qr_code = $1
           AND b.status != 'archived'
-          AND NOT (
-            o.status = 'pickup'
-            AND (
-              COALESCE(o.ready_to_place, 0) = 1
-              OR COALESCE(o.ready_for_pickup, 0) = 1
-            )
-          )
         LIMIT 1
       `,
       [qrCode]
@@ -702,14 +757,20 @@ function createPostgresWorkflowRepository(queryable) {
     return changes(result);
   }
 
-  async function markOrderPlacedForPickup({ orderId, timestamp }) {
+  async function markOrderPlacedForPickup({ orderId, timestamp, readyForPickup = true }) {
     const result = await queryable.query(
       `
         UPDATE orders
-        SET ready_to_place = 0, ready_for_pickup = 1, cleancloud_status = 'Готов к выдаче', updated_at = $1
-        WHERE id = $2
+        SET ready_to_place = $1, ready_for_pickup = $2, cleancloud_status = $3, updated_at = $4
+        WHERE id = $5
       `,
-      [timestamp, orderId]
+      [
+        0,
+        readyForPickup ? 1 : 0,
+        readyForPickup ? "Готов к выдаче" : "Частично размещен на выдаче",
+        timestamp,
+        orderId
+      ]
     );
     return changes(result);
   }
@@ -776,6 +837,10 @@ function createPostgresWorkflowRepository(queryable) {
     insertMachineLoad,
     insertMachineLoadBasket,
     insertScanEvent,
+    findActiveIroningSessionByBasketId,
+    insertIroningSession,
+    completeIroningSession,
+    listActiveIroningSessions,
     getMachineLoadById,
     listPendingMachineLoadBaskets,
     findActiveBasketCatalogQr,

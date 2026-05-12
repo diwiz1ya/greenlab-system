@@ -5,6 +5,12 @@ const fsp = fs.promises;
 const path = require("path");
 const { normalizeBasketQrCode } = require("./basket-pool");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
+const {
+  buildRouteSheetQr,
+  isLegacyProductionBinQr,
+  isRouteSheetQr,
+  normalizeProductionQrCode
+} = require("./route-sheet");
 
 function createSortingWorkflow(options) {
   const {
@@ -111,38 +117,36 @@ function createSortingWorkflow(options) {
       .filter(Boolean);
   }
 
-  async function assignAndValidateCatalogQrs(baskets, options = {}) {
+  async function assignAndValidateProductionQrs(baskets, options = {}) {
     const list = Array.isArray(baskets) ? baskets : [];
-    const excludeOrderId = Number(options.excludeOrderId || 0);
     const knownQrs = new Set(await listKnownCatalogQrs());
-    const missingIndexes = [];
+    const usedQrCodes = new Set();
 
     for (let index = 0; index < list.length; index += 1) {
       const basket = list[index];
-      basket.qrCode = normalizeBasketQrCode(basket?.qrCode || "");
+      basket.qrCode = normalizeProductionQrCode(basket?.qrCode || "");
       if (!basket.qrCode) {
-        missingIndexes.push(index);
+        basket.qrCode = buildRouteSheetQr(options.orderPublicId, index);
       }
-    }
-
-    if (missingIndexes.length) {
-      const freeQrs = await listFreeCatalogQrs(missingIndexes.length, excludeOrderId);
-      if (freeQrs.length < missingIndexes.length) {
+      if (basket.qrCode.length > 120) {
+        return { error: "Route sheet QR is too long.", status: 400 };
+      }
+      if (usedQrCodes.has(basket.qrCode)) {
         return {
-          error: `Not enough free baskets in BIN pool (needed ${missingIndexes.length}, available ${freeQrs.length}).`,
-          status: 409
+          error: `QR ${basket.qrCode} was added to the order multiple times.`,
+          status: 400
         };
       }
-      for (let index = 0; index < missingIndexes.length; index += 1) {
-        const basketIndex = missingIndexes[index];
-        list[basketIndex].qrCode = freeQrs[index];
-      }
-    }
-
-    for (const basket of list) {
-      if (!knownQrs.has(basket.qrCode)) {
+      usedQrCodes.add(basket.qrCode);
+      if (isLegacyProductionBinQr(basket.qrCode) && !knownQrs.has(basket.qrCode)) {
         return {
-          error: `QR ${basket.qrCode} is not present in BIN basket catalog BIN-001..BIN-050.`,
+          error: `Legacy BIN QR ${basket.qrCode} is not present in BIN basket catalog BIN-001..BIN-050.`,
+          status: 400
+        };
+      }
+      if (!isLegacyProductionBinQr(basket.qrCode) && !isRouteSheetQr(basket.qrCode)) {
+        return {
+          error: `QR ${basket.qrCode} is not a route sheet QR. Expected QR:RS-001 or legacy QR:BIN-001.`,
           status: 400
         };
       }
@@ -234,7 +238,7 @@ function createSortingWorkflow(options) {
         const qrCode = normalizeBasketQrCode(String(basket?.qrCode || basket?.qr_code || ""));
         if (qrCode) {
           if (qrCode.length > 120) {
-            return { error: "Basket QR is too long.", status: 400 };
+            return { error: "Route sheet QR is too long.", status: 400 };
           }
           if (usedQrCodes.has(qrCode)) {
             return { error: `QR ${qrCode} was added to the order multiple times.`, status: 400 };
@@ -261,7 +265,7 @@ function createSortingWorkflow(options) {
       }
 
       if (!normalized.length) {
-        return { error: "Add at least one basket before starting sorting.", status: 400 };
+        return { error: "Add at least one route sheet before starting sorting.", status: 400 };
       }
 
       return { ok: true, baskets: normalized };
@@ -273,7 +277,7 @@ function createSortingWorkflow(options) {
       .slice(0, 20);
 
     if (!normalizedTypes.length) {
-      return { error: "Add at least one basket before starting sorting.", status: 400 };
+      return { error: "Add at least one route sheet before starting sorting.", status: 400 };
     }
 
     return {
@@ -308,7 +312,7 @@ function createSortingWorkflow(options) {
       const basketCode = `B-${order.public_id.slice(3)}-${index + 1}`;
       const qrCode = normalizeBasketQrCode(basket?.qrCode || "");
       if (!qrCode) {
-        throw new Error("Basket QR is not specified.");
+        throw new Error("Route sheet QR is not specified.");
       }
       const basketId = await sortingRepository.insertBasket({
         orderId: order.id,
@@ -337,14 +341,17 @@ function createSortingWorkflow(options) {
 
     const existing = await sortingRepository.countBasketsByOrder(orderId);
     if (existing > 0) {
-      return { error: "Baskets are already created.", status: 400 };
+      return { error: "Route sheets are already created.", status: 400 };
     }
 
     const normalized = normalizeBasketDefinitions(payload);
     if (normalized.error) {
       return normalized;
     }
-    const prepared = await assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: 0 });
+    const prepared = await assignAndValidateProductionQrs(normalized.baskets, {
+      excludeOrderId: 0,
+      orderPublicId: order.public_id
+    });
     if (prepared.error) {
       return prepared;
     }
@@ -358,7 +365,7 @@ function createSortingWorkflow(options) {
       await insertBaskets(order, prepared.baskets, timestamp);
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
-        return { error: "One of the QR codes is already used by another order. Check that the basket is free.", status: 409 };
+        return { error: "One of the route sheet QR codes is already used by another order.", status: 409 };
       }
       return { error: error?.message || "Failed to create baskets.", status: 500 };
     }
@@ -368,7 +375,7 @@ function createSortingWorkflow(options) {
     await sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
-      message: "Baskets created, QR labels prepared. Order is waiting for washing.",
+      message: "Route sheets created, QR labels prepared. Order is waiting for washing.",
       timestamp
     });
 
@@ -393,7 +400,10 @@ function createSortingWorkflow(options) {
     if (normalized.error) {
       return normalized;
     }
-    const prepared = await assignAndValidateCatalogQrs(normalized.baskets, { excludeOrderId: orderId });
+    const prepared = await assignAndValidateProductionQrs(normalized.baskets, {
+      excludeOrderId: orderId,
+      orderPublicId: order.public_id
+    });
     if (prepared.error) {
       return prepared;
     }
@@ -404,7 +414,7 @@ function createSortingWorkflow(options) {
 
     const basketCount = await sortingRepository.countBasketsByOrder(orderId);
     if (!basketCount) {
-      return { error: "Order has no baskets to edit.", status: 400 };
+      return { error: "Order has no route sheets to edit.", status: 400 };
     }
 
     const timestamp = nowIso();
@@ -414,7 +424,7 @@ function createSortingWorkflow(options) {
       await insertBaskets(order, prepared.baskets, timestamp);
     } catch (error) {
       if (String(error?.message || "").includes("UNIQUE constraint failed: baskets.qr_code")) {
-        return { error: "One of the QR codes is already used by another order. Check that the basket is free.", status: 409 };
+        return { error: "One of the route sheet QR codes is already used by another order.", status: 409 };
       }
       return { error: error?.message || "Failed to update baskets.", status: 500 };
     }
@@ -424,7 +434,7 @@ function createSortingWorkflow(options) {
     await sortingRepository.insertSortingScanEvent({
       orderId,
       actor,
-      message: `Basket set updated: ${normalized.baskets.length} pcs. Order remains waiting for washing.`,
+      message: `Route sheet set updated: ${normalized.baskets.length} pcs. Order remains waiting for washing.`,
       timestamp
     });
 

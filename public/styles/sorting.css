@@ -853,16 +853,51 @@ button.sorting-item-step.secondary:active {
 .sorting-basket-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+}
+.sorting-basket-tab-wrap {
+  align-items: center;
+  display: inline-flex;
+  position: relative;
 }
 .sorting-basket-tab {
   border-radius: 999px;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 12px;
 }
 .sorting-basket-tab.active {
   background: #0f5e4b;
   color: #f7fbf8;
+}
+.sorting-basket-tab-remove {
+  align-items: center;
+  background: #b6402a;
+  border: 2px solid #fffdf8;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 800;
+  height: 22px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 22px;
+  min-width: 22px;
+  padding: 0;
+  position: absolute;
+  right: -7px;
+  top: -7px;
+  width: 22px;
+}
+.sorting-basket-tab-remove:hover {
+  background: #8d2f1f;
+}
+.sorting-basket-tab-add {
+  border-color: #8ec8b4;
+  color: #0f5e4b;
+  font-size: 24px;
+  font-weight: 700;
 }
 .sorting-review-list {
   display: grid;

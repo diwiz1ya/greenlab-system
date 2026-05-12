@@ -19,7 +19,9 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
     const baskets = rows.map((row) => ({
       id: row.id,
       basket_code: row.basket_code,
+      route_sheet_code: row.basket_code,
       qr_code: row.qr_code,
+      route_sheet_qr_code: row.qr_code,
       scanned: Boolean(row.scanned)
     }));
     const totalBaskets = baskets.length;
@@ -29,7 +31,9 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
       totalBaskets,
       scannedBaskets,
       complete: totalBaskets > 0 && scannedBaskets >= totalBaskets,
-      baskets
+      baskets,
+      routeSheets: baskets,
+      route_sheets: baskets
     };
   }
 
@@ -55,9 +59,13 @@ function createPickupWorkbenchService(pickupWorkbenchRepository, options = {}) {
       ready_for_pickup: Boolean(row.ready_for_pickup),
       can_confirm: Boolean(row.ready_for_pickup),
       total_baskets: progress.totalBaskets,
+      total_route_sheets: progress.totalBaskets,
       scanned_baskets: progress.scannedBaskets,
+      scanned_route_sheets: progress.scannedBaskets,
       remaining_to_scan: Math.max(0, progress.totalBaskets - progress.scannedBaskets),
       baskets: progress.baskets,
+      route_sheets: progress.baskets,
+      routeSheets: progress.baskets,
       total_order_baskets: assembly.totalOrderBaskets,
       baskets_at_pickup: assembly.basketsAtPickup,
       remaining_to_pickup: Math.max(0, assembly.totalOrderBaskets - assembly.basketsAtPickup),

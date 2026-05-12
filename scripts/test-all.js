@@ -700,6 +700,9 @@ async function runLocalTests(serverLogs) {
     }
     const firstBasket = create.data.order?.baskets?.[0];
     if (!firstBasket?.qr_code) throw new Error("Multipart create response has no basket qr_code");
+    if (!String(firstBasket.qr_code).startsWith("QR:RS-")) {
+      throw new Error(`Expected auto-created route sheet QR, got ${firstBasket.qr_code}`);
+    }
     if (!Array.isArray(firstBasket.images) || firstBasket.images.length < 1) {
       throw new Error("Expected at least one basket image after multipart create");
     }
@@ -718,6 +721,41 @@ async function runLocalTests(serverLogs) {
     const replayBasket = replay.data.order?.baskets?.[0];
     if (replayBasket?.qr_code !== firstBasket.qr_code) {
       throw new Error(`Expected same basket qr on replay, got ${replayBasket?.qr_code} vs ${firstBasket.qr_code}`);
+    }
+  });
+
+  await run("Sorting route sheet aliases create production QRs", async () => {
+    const reset = await apiRequest(baseUrl, "/api/demo/reset", {
+      method: "POST",
+      token: managerToken,
+      body: {}
+    });
+    if (reset.status !== 200 || !reset.data.ok) throw new Error("Reset failed");
+
+    const sortingOrders = await apiRequest(baseUrl, "/api/orders?station=sorting", { token: managerToken });
+    const targetOrderId = sortingOrders.data.orders?.[0]?.id;
+    if (!targetOrderId) throw new Error("No sorting order for route sheet alias test");
+
+    const create = await apiRequest(baseUrl, "/api/sorting/create-route-sheets", {
+      method: "POST",
+      token: managerToken,
+      body: {
+        orderId: targetOrderId,
+        routeSheets: [
+          { type: "Mixed", itemCounts: { top: 1, bottom: 0, underwear: 0, socksPairs: 0 } }
+        ]
+      }
+    });
+    if (create.status !== 200 || !create.data.ok) {
+      throw new Error(`Create route sheets failed: ${create.status}`);
+    }
+    const qrCode = create.data.order?.baskets?.[0]?.qr_code;
+    if (!String(qrCode || "").startsWith("QR:RS-")) {
+      throw new Error(`Expected route sheet QR from alias endpoint, got ${qrCode}`);
+    }
+    const routeSheetQr = create.data.order?.routeSheets?.[0]?.route_sheet_qr_code;
+    if (routeSheetQr !== qrCode) {
+      throw new Error(`Expected routeSheets alias in response, got ${routeSheetQr}`);
     }
   });
 
@@ -835,6 +873,9 @@ async function runLocalTests(serverLogs) {
     if (create.status !== 200 || !create.data.ok) throw new Error("Create baskets failed");
     qrCodes = create.data.order.baskets.map((basket) => basket.qr_code);
     if (qrCodes.length !== 3) throw new Error(`Expected 3 baskets, got ${qrCodes.length}`);
+    if (!qrCodes.every((qrCode) => String(qrCode).startsWith("QR:RS-"))) {
+      throw new Error(`Expected auto-created route sheet QRs, got ${qrCodes.join(", ")}`);
+    }
 
     const duplicateCreate = await apiRequest(baseUrl, "/api/sorting/create-baskets", {
       method: "POST",
@@ -959,6 +1000,9 @@ async function runLocalTests(serverLogs) {
     const reworkQr = confirmTransfer.data.task?.rework_basket_qr_code
       || confirmTransfer.data.order?.rework_requests?.find((row) => Number(row.id) === Number(requestId))?.rework_basket_qr_code;
     if (!reworkQr) throw new Error("Expected rework basket QR after transfer confirmation");
+    if (!String(reworkQr).startsWith("QR:RS-RW-")) {
+      throw new Error(`Expected rework route sheet QR, got ${reworkQr}`);
+    }
 
     const transferedSourceBasket = (confirmTransfer.data.order.baskets || []).find((basket) => basket.qr_code === rejectedQr);
     if (!transferedSourceBasket) throw new Error("Source basket missing after transfer confirmation");
@@ -1017,16 +1061,23 @@ async function runLocalTests(serverLogs) {
     }
 
     const activeQrCodes = [rejectedQr, ...qrCodes.slice(1), reworkQr];
-    for (const station of ["ironing"]) {
-      for (const qrCode of activeQrCodes) {
-        const scan = await apiRequest(baseUrl, "/api/scan", {
-          method: "POST",
-          token: managerToken,
-          body: { station, qrCode }
-        });
-        if (scan.status !== 200 || !scan.data.ok) {
-          throw new Error(`Scan failed at ${station} for ${qrCode}: ${scan.status}`);
-        }
+    for (const qrCode of activeQrCodes) {
+      const ironingStart = await apiRequest(baseUrl, "/api/scan", {
+        method: "POST",
+        token: managerToken,
+        body: { station: "ironing", qrCode }
+      });
+      if (ironingStart.status !== 200 || !ironingStart.data.ok || ironingStart.data.ironing?.action !== "started") {
+        throw new Error(`Ironing start failed for ${qrCode}: ${ironingStart.status}`);
+      }
+
+      const ironingComplete = await apiRequest(baseUrl, "/api/scan", {
+        method: "POST",
+        token: managerToken,
+        body: { station: "ironing", qrCode }
+      });
+      if (ironingComplete.status !== 200 || !ironingComplete.data.ok || ironingComplete.data.ironing?.action !== "completed") {
+        throw new Error(`Ironing complete failed for ${qrCode}: ${ironingComplete.status}`);
       }
     }
 
@@ -1075,18 +1126,18 @@ async function runLocalTests(serverLogs) {
         orderId,
         containerCount: 1,
         placements: [
-          { binQr: "QR:BIN-049", locationQr: "QR:LOC-A01" }
+          { locationQr: "QR:LOC-A01" }
         ]
       }
     });
     if (placeOrder.status !== 200 || !placeOrder.data.ok) {
-      throw new Error(`Pickup placement failed: ${placeOrder.status}`);
+      throw new Error(`Pickup placement failed: ${placeOrder.status} ${JSON.stringify(placeOrder.data)}`);
     }
 
     const placedWorkbench = await apiRequest(baseUrl, "/api/pickup/workbench", { token: managerToken });
     const placedOrder = (placedWorkbench.data.placedOrders || []).find((order) => order.id === orderId);
-    if (!placedOrder) throw new Error("Order missing in placed workbench list after placement");
-    if (!placedOrder.ready_for_pickup) throw new Error("Order should be ready_for_pickup after placement");
+    if (!placedOrder) throw new Error("Fully accepted order should be ready for handoff after placement");
+    if (!placedOrder.ready_for_pickup) throw new Error("Expected ready_for_pickup=true after full-order placement");
 
     const complete = await apiRequest(baseUrl, "/api/pickup/complete", {
       method: "POST",
@@ -1139,7 +1190,7 @@ async function runLocalTests(serverLogs) {
     const basketB = create.data.order?.baskets?.[1]?.qr_code;
     if (!basketA || !basketB) throw new Error("Expected two basket QR codes");
 
-    for (const station of ["washing", "drying", "qc", "ironing"]) {
+    for (const station of ["washing", "drying", "qc"]) {
       const scan = await apiRequest(baseUrl, "/api/scan", {
         method: "POST",
         token: managerToken,
@@ -1150,6 +1201,24 @@ async function runLocalTests(serverLogs) {
       }
     }
 
+    const ironingStart = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "ironing", qrCode: basketA }
+    });
+    if (ironingStart.status !== 200 || !ironingStart.data.ok || ironingStart.data.ironing?.action !== "started") {
+      throw new Error(`Failed to start basketA ironing: ${ironingStart.status}`);
+    }
+
+    const ironingComplete = await apiRequest(baseUrl, "/api/scan", {
+      method: "POST",
+      token: managerToken,
+      body: { station: "ironing", qrCode: basketA }
+    });
+    if (ironingComplete.status !== 200 || !ironingComplete.data.ok || ironingComplete.data.ironing?.action !== "completed") {
+      throw new Error(`Failed to complete basketA ironing: ${ironingComplete.status}`);
+    }
+
     const prePickupScan = await apiRequest(baseUrl, "/api/scan", {
       method: "POST",
       token: managerToken,
@@ -1158,7 +1227,7 @@ async function runLocalTests(serverLogs) {
     if (prePickupScan.status !== 200 || !prePickupScan.data.ok) {
       throw new Error(`Expected pre-pickup scan success, got ${prePickupScan.status}`);
     }
-    if (!String(prePickupScan.data.message || "").toLowerCase().includes("сборк")) {
+    if (!String(prePickupScan.data.message || "").toLowerCase().includes("assembly")) {
       throw new Error(`Expected pre-pickup message to mention assembly progress, got ${prePickupScan.data.message}`);
     }
 

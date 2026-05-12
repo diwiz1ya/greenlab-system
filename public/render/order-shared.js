@@ -11,7 +11,7 @@ export const stationStatusLabels = {
   rework_transferred: "Transferred to rework",
   drying: "Drying",
   ironing: "Ironing",
-  pickup: "Pickup",
+  pickup: "Dispatch",
   hold: "HOLD (manager)"
 };
 
@@ -176,7 +176,7 @@ export function getOrderProgressLabel(order) {
     return "Issued";
   }
   if (order.status === "pickup" && order.ready_for_pickup) {
-    return "Ready for pickup";
+    return "Ready for handoff";
   }
   if (order.status === "pickup" && order.ready_to_place) {
     return "Ready to place";

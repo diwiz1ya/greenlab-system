@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
+const QRCode = require("qrcode");
 const { openDatabase } = require("./backend/db");
 const { runImmediateAsyncTransaction } = require("./backend/db/transaction");
 const { createRepositories } = require("./backend/db/repositories");
@@ -161,7 +162,7 @@ const stationLabels = {
   qc: "Quality Control (QC)",
   rework: "Rework",
   ironing: "Ironing",
-  pickup: "Pickup"
+  pickup: "Dispatch"
 };
 
 const productionFlow = ["washing", "drying", "qc", "ironing", "pickup"];
@@ -217,6 +218,7 @@ const {
   unloadBasketFromMachineLoad,
   cancelMachineLoad,
   scanBasket,
+  listIroningWorkbench,
   inspectQcBasket,
   rejectBasketFromQc,
   createReworkRequestFromQc,
@@ -226,6 +228,7 @@ const {
   confirmQcTransferTask,
   releaseOrderFromHold,
   completePickup,
+  confirmPickupAssembly,
   placeOrderForPickup
 } = createWorkflowService({
   db,
@@ -336,6 +339,17 @@ async function ensureCurrentUsers() {
       allowedStationsJson: JSON.stringify(["rework", "overview"])
     });
   }
+
+  if (!(await demoSeedRepository.userExists("dispatch"))) {
+    await demoSeedRepository.insertUser({
+      username: "dispatch",
+      password: REDACTED_PASSWORD_VALUE,
+      passwordHash: hashPassword("demo123"),
+      displayName: "Dispatch operator",
+      role: "pickup_operator",
+      allowedStationsJson: JSON.stringify(["pickup", "overview"])
+    });
+  }
 }
 
 async function ensureDefaultMachines() {
@@ -401,7 +415,7 @@ async function seedDemoData(options = {}) {
     ["rework", "demo123", "Rework operator", "rework_operator", ["rework", "overview"]],
     ["drying", "demo123", "Drying operator", "drying_operator", ["drying", "overview"]],
     ["ironing", "demo123", "Ironing operator", "ironing_operator", ["ironing", "overview"]],
-    ["pickup", "demo123", "Pickup operator", "pickup_operator", ["pickup", "overview"]],
+    ["dispatch", "demo123", "Dispatch operator", "pickup_operator", ["pickup", "overview"]],
     ["manager", "demo123", "Branch manager", "manager", ["overview", "sorting", "washing", "drying", "qc", "rework", "ironing", "pickup"]]
   ];
 
@@ -927,6 +941,7 @@ const workflowRoutesContext = {
   unloadBasketFromMachineLoad,
   cancelMachineLoad,
   scanBasket,
+  listIroningWorkbench,
   rejectBasketFromQc,
   createReworkRequestFromQc,
   approveReworkRequest,
@@ -935,6 +950,7 @@ const workflowRoutesContext = {
   confirmQcTransferTask,
   inspectQcBasket,
   completePickup,
+  confirmPickupAssembly,
   placeOrderForPickup,
   releaseOrderFromHold
 };
@@ -1005,6 +1021,28 @@ const server = http.createServer(async (req, res) => {
       };
 
       json(res, dbOk ? 200 : 503, payload);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/qr.svg") {
+      const text = String(url.searchParams.get("text") || "").trim();
+      if (!text || text.length > 160) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+        res.end("QR text is required.");
+        return;
+      }
+
+      const svg = await QRCode.toString(text, {
+        type: "svg",
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 220
+      });
+      res.writeHead(200, {
+        "Content-Type": "image/svg+xml; charset=utf-8",
+        "Cache-Control": "no-store"
+      });
+      res.end(svg);
       return;
     }
 

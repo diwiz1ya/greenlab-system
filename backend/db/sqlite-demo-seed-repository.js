@@ -97,6 +97,7 @@ function createSqliteDemoSeedRepository(db) {
       DELETE FROM machine_load_baskets;
       DELETE FROM machine_loads;
       DELETE FROM laundry_machines;
+      DELETE FROM ironing_sessions;
       DELETE FROM rework_requests;
       DELETE FROM baskets;
       DELETE FROM orders;

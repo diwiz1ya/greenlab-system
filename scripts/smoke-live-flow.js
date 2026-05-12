@@ -124,7 +124,27 @@ async function run() {
     throw new Error("Sorting create-baskets returned ok=false.");
   }
 
-  for (const station of ["washing", "drying", "qc", "ironing", "pickup"]) {
+  for (const station of ["washing", "drying", "qc", "pickup"]) {
+    if (station === "pickup") {
+      const ironingStart = await api(baseUrl, "/api/scan", {
+        method: "POST",
+        token: tokens.ironing,
+        body: { station: "ironing", qrCode }
+      });
+      if (ironingStart.ok !== true) {
+        throw new Error("Ironing start returned ok=false.");
+      }
+
+      const ironingComplete = await api(baseUrl, "/api/scan", {
+        method: "POST",
+        token: tokens.ironing,
+        body: { station: "ironing", qrCode }
+      });
+      if (ironingComplete.ok !== true) {
+        throw new Error("Ironing complete returned ok=false.");
+      }
+    }
+
     const result = await api(baseUrl, "/api/scan", {
       method: "POST",
       token: tokens[station],
@@ -147,7 +167,7 @@ async function run() {
     body: {
       orderId: Number(order.id),
       containerCount: 1,
-      placements: [{ binQr: "QR:BIN-049", locationQr: "QR:LOC-A01" }]
+      placements: [{ locationQr: "QR:LOC-A01" }]
     }
   });
   if (placementResult.ok !== true) {

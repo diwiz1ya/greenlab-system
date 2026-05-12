@@ -450,7 +450,7 @@ function renderManagerCaseOps(order, risk, options = {}) {
 function getManagerCaseOpenLabel(order, options = {}) {
   if (options.compact) return "Open";
   if (isApprovalOrder(order)) return "Approval";
-  if (isReadyOrder(order)) return "Open pickup";
+  if (isReadyOrder(order)) return "Open handoff";
   if (order.status === "qc") return "Open QC";
   if (order.status === "rework") return "Open rework";
   if (isNewOrder(order)) return "Open sorting";
@@ -475,7 +475,7 @@ function renderManagerCaseActions(order, options = {}) {
   } else if (isReadyOrder(order)) {
     buttons.push(`
       <button class="manager-case-action" data-complete-pickup-order="${order.id}" data-order-public-id="${escapeHtml(order.public_id)}">
-        Mark issued
+        Confirm handoff
       </button>
     `);
   }
@@ -1177,12 +1177,12 @@ export function renderManagerReadyOrderModal(order) {
   if (!order) return "";
 
   return `
-    <section class="manager-sync-modal manager-ready-order-modal" role="dialog" aria-modal="true" aria-label="Pickup order">
+    <section class="manager-sync-modal manager-ready-order-modal" role="dialog" aria-modal="true" aria-label="Customer handoff order">
       <div class="manager-sync-modal-backdrop" data-close-manager-ready-modal></div>
       <article class="manager-sync-modal-sheet manager-ready-order-sheet">
         <header class="manager-sync-modal-head manager-ready-order-head">
           <div class="manager-ready-order-head-main">
-            <div class="eyebrow">Pickup</div>
+            <div class="eyebrow">Customer handoff</div>
             <h3>${escapeHtml(order.public_id || "Order")}</h3>
             <div class="muted">${escapeHtml(String(order.customer_name || "").trim())}</div>
           </div>
@@ -1211,7 +1211,7 @@ export function renderManagerReadyOrderModal(order) {
         <footer class="manager-ready-order-footer">
           <div class="manager-ready-order-actions">
             <button data-complete-pickup-order="${Number(order.id)}" data-order-public-id="${escapeHtml(order.public_id || "")}">
-              Issued
+              Confirm handoff
             </button>
           </div>
         </footer>
@@ -1251,13 +1251,13 @@ export function renderManagerHistoryModal(orders, options = {}) {
   const visible = sorted;
 
   return `
-    <section class="manager-sync-modal manager-history-modal" role="dialog" aria-modal="true" aria-label="Pickup archive">
+    <section class="manager-sync-modal manager-history-modal" role="dialog" aria-modal="true" aria-label="Handoff archive">
       <div class="manager-sync-modal-backdrop" data-close-manager-history-modal></div>
       <article class="manager-sync-modal-sheet manager-history-sheet">
         <header class="manager-sync-modal-head manager-history-head">
           <div>
             <div class="eyebrow">Archive</div>
-            <h3>Pickup archive</h3>
+            <h3>Handoff archive</h3>
           </div>
           <div class="manager-sync-modal-actions">
             <button type="button" data-close-manager-history-modal>Close</button>
@@ -1269,7 +1269,7 @@ export function renderManagerHistoryModal(orders, options = {}) {
               ? visible.map((order) => renderManagerHistoryCard(order)).join("")
               : renderManagerEmptyCard(
                 query ? "No records in archive for the current filter." : "No issued orders in archive yet.",
-                query ? "Clear or adjust the filter." : "Orders appear here after pickup confirmation."
+                query ? "Clear or adjust the filter." : "Orders appear here after customer handoff confirmation."
               )
           }
         </div>
@@ -1295,7 +1295,7 @@ export function renderManagerReportsModal(options = {}) {
     {
       key: "shift-summary",
       title: "Shift summary",
-      note: "Received, in progress, ready for pickup, issued, and key shift KPIs."
+      note: "Received, in progress, ready for handoff, issued, and key shift KPIs."
     },
     {
       key: "issued-archive",
@@ -1384,7 +1384,7 @@ function buildFlowStageRows(orders, nowMs = Date.now()) {
     { key: "ironing", label: "Ironing", statuses: ["ironing"] },
     {
       key: "pickup",
-      label: "Pickup",
+      label: "Handoff",
       statuses: ["pickup"],
       match: (order) => Boolean(order.status === "pickup" && order.ready_for_pickup)
     }
@@ -1433,9 +1433,9 @@ function renderManagerQuickViewModal(data, kind, anchorY = 0) {
       emptyText: data.query ? "No critical cases for this filter." : "There are no cases requiring decision now."
     },
     ready: {
-      title: "Ready for pickup",
+      title: "Ready for handoff",
       orders: data.readyOrders,
-      emptyText: data.query ? "No pickup-ready orders for this filter." : "No pickup-ready orders yet."
+      emptyText: data.query ? "No handoff-ready orders for this filter." : "No handoff-ready orders yet."
     },
     qc: {
       title: "QC / rework",
@@ -1638,7 +1638,7 @@ export function renderManagerOverviewCompact(orders, syncSummary = {}, filterQue
 
         <section class="manager-ex-zone ready">
           <header class="manager-ex-zone-head">
-            <h3>Ready for pickup</h3>
+            <h3>Ready for handoff</h3>
             <span class="pill">${metrics.readyNowCount}</span>
           </header>
           <div class="manager-ex-list">
@@ -1646,8 +1646,8 @@ export function renderManagerOverviewCompact(orders, syncSummary = {}, filterQue
               readyRows.length
                 ? readyRows.map((order) => renderReadyQueueMiniRow(order)).join("")
                 : renderManagerEmptyCard(
-                  data.query ? "No pickup-ready orders for this filter." : "There are no orders ready for pickup now.",
-                  data.query ? "Check filter by phone or order ID." : "When an order reaches pickup, it appears here."
+                  data.query ? "No handoff-ready orders for this filter." : "There are no orders ready for handoff now.",
+                  data.query ? "Check filter by phone or order ID." : "When Dispatch placement is complete, the order appears here."
                 )
             }
           </div>

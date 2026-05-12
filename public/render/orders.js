@@ -71,7 +71,7 @@ function renderReworkHistory(baskets) {
       <div class="order-detail-list">
         ${reworkBaskets
           .map((basket) => {
-            const parentCode = rows.find((item) => item.id === basket.parent_basket_id)?.basket_code || "Source basket";
+            const parentCode = rows.find((item) => item.id === basket.parent_basket_id)?.basket_code || "Source route sheet";
             const reasonLabel = formatReworkReasonLabel(basket.rework_reason);
             const attempt = Number(basket.rework_attempt || 0) || 1;
             return `
@@ -217,7 +217,7 @@ export function renderOrderDetails(order) {
           : ""
       }
       <div class="order-details-summary">
-        <span class="pill">baskets: ${baskets.length}</span>
+        <span class="pill">route sheets: ${baskets.length}</span>
         <span class="pill">scans: ${scans.length}</span>
         <span class="pill ${order.has_pending_customer_approval ? "warn" : ""}">approval: ${reworkRequests.length}</span>
         <span class="pill">weight: ${escapeHtml(formatOrderWeight(order.order_weight))}</span>
@@ -225,7 +225,7 @@ export function renderOrderDetails(order) {
       </div>
       <details class="order-details-fold">
         <summary>
-          <strong>Baskets</strong>
+          <strong>Route sheets</strong>
           <span class="pill">${baskets.length}</span>
         </summary>
         <div class="order-detail-list">
@@ -247,7 +247,7 @@ export function renderOrderDetails(order) {
                     `
                   )
                   .join("")
-              : renderOrderDetailEmpty("Baskets will appear after sorting.")
+              : renderOrderDetailEmpty("Route sheets will appear after sorting.")
           }
         </div>
       </details>
@@ -392,7 +392,7 @@ function renderBasketSummaryStrip(baskets) {
       <div class="order-basket-summary-kpis">
         <span class="order-basket-summary-chip kpi emphasis">
           <span class="order-basket-summary-copy">
-            <span class="order-basket-summary-eyebrow">Baskets</span>
+            <span class="order-basket-summary-eyebrow">Route sheets</span>
             <strong>${escapeHtml(String(summary.totalCount))}</strong>
             <span>in order</span>
           </span>
@@ -423,7 +423,7 @@ function renderOrderPassport(order, baskets, reworkRequests) {
     { label: "Status", value: getOrderProgressLabel(order), tone: order.status === "hold" ? "critical" : (order.ready_for_pickup ? "ok" : "") },
     { label: "Station", value: stationStatusLabels[order.status] || order.status },
     { label: "QR", value: baskets.length ? `${basketSummary.qrCount}/${baskets.length}` : "0/0" },
-    { label: "Baskets", value: `${basketSummary.mainCount}${basketSummary.reworkCount ? ` + RW ${basketSummary.reworkCount}` : ""}` },
+    { label: "Route sheets", value: `${basketSummary.mainCount}${basketSummary.reworkCount ? ` + RW ${basketSummary.reworkCount}` : ""}` },
     { label: "Items", value: String(basketSummary.itemCount || 0) },
     { label: "Approval", value: String(reworkRequests.length), tone: order.has_pending_customer_approval ? "warn" : "" }
   ];
@@ -484,7 +484,7 @@ function renderOrderActionDeck(order, reworkRequests, options = {}) {
     tiles.push(renderOrderActionTile({
       eyebrow: "External sync",
       title: "Close case in CleanCloud",
-      body: "Local pickup is already confirmed. Check integration health and close the order in the external system.",
+      body: "Customer handoff is already confirmed. Check integration health and close the order in the external system.",
       tone: "soft",
       actions: `
         <button class="secondary" data-open-sync-modal>Open integration journal</button>
@@ -511,7 +511,7 @@ function buildReworkRequestSummary(request) {
   const itemLabel = request.item_label
     ? `${formatReworkItemLabel(request.item_category)} · ${request.item_label}`
     : formatReworkItemLabel(request.item_category);
-  return `${request.source_basket_code || "Basket"} -> ${itemLabel}`;
+  return `${request.source_basket_code || "Route sheet"} -> ${itemLabel}`;
 }
 
 function renderBasketReworkFlags(basket, basketsById = new Map()) {
@@ -524,7 +524,7 @@ function renderBasketReworkFlags(basket, basketsById = new Map()) {
     <div class="order-basket-rework-flags">
       <span class="order-basket-flag">${escapeHtml(`Reason: ${reasonLabel}`)}</span>
       <span class="order-basket-flag">${escapeHtml(`Attempt: ${attempt}`)}</span>
-      <span class="order-basket-flag">${escapeHtml(`From basket: ${sourceCode}`)}</span>
+      <span class="order-basket-flag">${escapeHtml(`From route sheet: ${sourceCode}`)}</span>
     </div>
   `;
 }
@@ -537,7 +537,7 @@ function renderBasketCard(basket, basketsById = new Map()) {
   const cardTitle = isRework ? `${basket.basket_code} · REWORK` : basket.basket_code;
   const visualTitle = isRework
     ? `RW: ${normalizeBasketTypeLabel(basket.basket_type)}`
-    : (String(basket.basket_type || "").trim() || "Basket");
+    : (String(basket.basket_type || "").trim() || "Route sheet");
   const metaMarkup = isRework
     ? renderBasketReworkFlags(basket, basketsById)
     : renderBasketReworkMeta(basket, basketsById);
@@ -577,7 +577,7 @@ function renderBasketCard(basket, basketsById = new Map()) {
 }
 
 function renderBasketSection(baskets, basketsById = new Map(), options = {}) {
-  const title = options.title || "Baskets and QR";
+  const title = options.title || "Route sheets and QR";
   const note = String(options.note || "").trim();
   const hideBasketCards = Boolean(options.hideBasketCards);
 
@@ -596,7 +596,7 @@ function renderBasketSection(baskets, basketsById = new Map(), options = {}) {
               ${
                 baskets.length
                   ? baskets.map((basket) => renderBasketCard(basket, basketsById)).join("")
-                  : renderOrderDetailEmpty("Baskets will appear after sorting.")
+                  : renderOrderDetailEmpty("Route sheets will appear after sorting.")
               }
             </div>
           `
@@ -647,7 +647,7 @@ function renderOrderModalAlerts(order, reworkRequests, options = {}) {
   if (isAwaitingCleanCloudClose(order)) {
     alerts.push(renderOrderModalAlert({
       tone: "warn",
-      title: "Local pickup completed",
+      title: "Customer handoff completed",
       body: "The order has been handed to the customer, but is not closed in the external system yet.",
       actions: options.managerView
         ? `<button class="secondary" data-open-sync-modal>Open CleanCloud journal</button>`
@@ -670,14 +670,14 @@ function buildTimelineDefinitions(order, baskets, reworkRequests, latestScans) {
     {
       key: "sorting",
       label: "Sorting",
-      summary: baskets.length ? `Baskets created: ${baskets.length}` : "Waiting for basket split.",
+      summary: baskets.length ? `Route sheets created: ${baskets.length}` : "Waiting for route sheet split.",
       meta: baskets[0]?.created_at ? `Started: ${formatOrderUpdatedAt(baskets[0].created_at)}` : "Not started yet"
     },
     {
       key: "washing",
       label: "Washing",
       summary: shortenText(latestScans.get("washing")?.message || (order.status === "sorted"
-        ? "Baskets are ready to start washing."
+        ? "Route sheets are ready to start washing."
         : "Main production washing cycle.")),
       meta: latestScans.get("washing")
         ? `${latestScans.get("washing").actor} · ${formatOrderUpdatedAt(latestScans.get("washing").created_at)}`
@@ -728,26 +728,26 @@ function buildTimelineDefinitions(order, baskets, reworkRequests, latestScans) {
     {
       key: "ironing",
       label: "Ironing",
-      summary: shortenText(latestScans.get("ironing")?.message || "Final preparation before pickup."),
+      summary: shortenText(latestScans.get("ironing")?.message || "Final preparation before handoff."),
       meta: latestScans.get("ironing")
         ? `${latestScans.get("ironing").actor} · ${formatOrderUpdatedAt(latestScans.get("ironing").created_at)}`
         : "No recent ironing scan"
     },
     {
       key: "pickup",
-      label: "Pickup",
+      label: "Dispatch",
       summary: isAwaitingCleanCloudClose(order)
-        ? "Local pickup is confirmed. Finalization in CleanCloud is required."
+        ? "Customer handoff is confirmed. Finalization in CleanCloud is required."
         : (order.ready_for_pickup
-          ? "Order is placed in a storage location and ready for pickup."
+          ? "Order is placed in a storage location and ready for customer handoff."
           : (order.ready_to_place
             ? "Order is assembled. BIN -> LOC placement is required."
-            : shortenText(latestScans.get("pickup")?.message || "Waiting for full pickup assembly."))),
+            : shortenText(latestScans.get("pickup")?.message || "Waiting for full dispatch assembly."))),
       meta: order.ready_for_pickup
         ? "Placed"
         : (latestScans.get("pickup")
           ? `${latestScans.get("pickup").actor} · ${formatOrderUpdatedAt(latestScans.get("pickup").created_at)}`
-          : order.cleancloud_status || "No pickup yet")
+          : order.cleancloud_status || "No dispatch yet")
     }
   ];
 
@@ -939,7 +939,7 @@ function renderManagerApprovalWorkbench(order, reworkRequests) {
                 <div class="order-approval-copy">
                   <span class="order-action-eyebrow">Approval case</span>
                   <strong>${escapeHtml(requestSummary)}</strong>
-                  <p>${escapeHtml(`Source basket ${sourceBasket} is now waiting for customer decision and must not continue through the flow.`)}</p>
+                  <p>${escapeHtml(`Source route sheet ${sourceBasket} is now waiting for customer decision and must not continue through the flow.`)}</p>
                 </div>
                 <div class="order-approval-pills">
                   <span class="pill warn">${escapeHtml(requestStatus)}</span>
@@ -1214,7 +1214,7 @@ function renderOrderModalFooter(order, options = {}) {
   if (managerView && order.status === "pickup" && order.ready_for_pickup) {
     actions.push(`
       <button data-complete-pickup-order="${order.id}" data-order-public-id="${escapeHtml(order.public_id)}">
-        Issued
+        Confirm handoff
       </button>
     `);
   }

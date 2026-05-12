@@ -36,12 +36,14 @@ async function handleAuthRoutes(req, res, url, ctx) {
           return true;
         }
 
-        const limiterResult = loginRateLimiter.hit(`${clientIp}:${username}`);
+        const normalizedUsername = String(username || "").trim().toLowerCase();
+        const loginUsername = normalizedUsername === "pickup" ? "dispatch" : normalizedUsername;
+        const limiterResult = loginRateLimiter.hit(`${clientIp}:${loginUsername}`);
         if (!limiterResult.allowed) {
           res.setHeader("Retry-After", String(limiterResult.retryAfterSec));
           await logSecurityEvent({
             category: "auth.login.rate_limited",
-            actor: username,
+            actor: loginUsername,
             ip: clientIp,
             path: url.pathname,
             method: req.method,
@@ -52,12 +54,12 @@ async function handleAuthRoutes(req, res, url, ctx) {
           return true;
         }
 
-        const user = await userRepository.findLoginUserByUsername(username);
+        const user = await userRepository.findLoginUserByUsername(loginUsername);
 
         if (!user || !verifyHashedPassword(password, user.password_hash)) {
           await logSecurityEvent({
             category: "auth.login.failed",
-            actor: username,
+            actor: loginUsername,
             ip: clientIp,
             path: url.pathname,
             method: req.method,

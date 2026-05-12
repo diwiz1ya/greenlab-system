@@ -2083,6 +2083,116 @@ button.warn:hover {
   padding: 16px;
 }
 
+.ironing-workbench {
+  min-height: calc(100vh - 180px);
+}
+
+.ironing-layout {
+  align-items: start;
+  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+}
+
+.ironing-scan-panel,
+.ironing-active-list {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+}
+
+.ironing-scan-panel h3 {
+  margin: 0;
+}
+
+.ironing-scan-form {
+  gap: 10px;
+}
+
+.qr-camera-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  margin-top: 8px;
+}
+
+.qr-camera-input-wrap > input,
+.qr-camera-input-wrap > .scan-large {
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0;
+  margin: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.qr-camera-button {
+  align-items: center;
+  background: #f9faf7;
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 18px 18px 0;
+  color: var(--ink);
+  display: inline-flex;
+  justify-content: center;
+  min-height: 64px;
+  padding: 0;
+}
+
+.qr-camera-button svg {
+  fill: none;
+  height: 24px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 24px;
+}
+
+.qr-camera-button:active {
+  transform: translateY(1px);
+}
+
+.qr-camera-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.ironing-list-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.ironing-session-card {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 0;
+}
+
+.ironing-session-scroll {
+  display: grid;
+  gap: 10px;
+  max-height: min(360px, 42vh);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: none;
+}
+
+.ironing-session-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.ironing-session-meta {
+  align-items: flex-end;
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.ironing-session-meta code {
+  white-space: nowrap;
+}
+
 .machine-workbench {
   background:
     radial-gradient(circle at top right, rgba(228, 245, 237, 0.54), transparent 38%),
@@ -2557,8 +2667,12 @@ button.warn:hover {
 .machine-flow-scan-row {
   align-items: center;
   display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr) 64px;
+}
+
+.machine-flow-scan-row.qr-camera-input-wrap {
+  margin-top: 0;
 }
 
 .machine-scan-icon-button {
@@ -2819,6 +2933,22 @@ button.warn:hover {
     border-radius: 20px;
     min-height: calc(100vh - 160px);
     padding: 10px;
+  }
+  .ironing-layout {
+    grid-template-columns: 1fr;
+  }
+  .ironing-session-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+  }
+  .ironing-session-meta {
+    align-items: start;
+    justify-items: start;
+  }
+  .ironing-session-scroll {
+    max-height: 260px;
   }
   .machine-workbench-min {
     padding: 10px;

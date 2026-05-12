@@ -6,7 +6,7 @@ export function renderHero(counts = {}) {
     <section class="hero">
       <div>
         <div class="eyebrow">Manager Hub</div>
-        <h1>Laundry operations flow: baskets, stations, QR, and sync control.</h1>
+        <h1>Laundry operations flow: route sheets, stations, QR, and sync control.</h1>
         <p class="lead">
           The interface is role-based: sorting and manager roles use full panels,
           scan stations run in kiosk mode with immediate scan feedback.
@@ -20,7 +20,7 @@ export function renderHero(counts = {}) {
         <div class="stat"><span class="muted">QC</span><strong>${counts.qc || 0}</strong></div>
         <div class="stat"><span class="muted">Rework</span><strong>${counts.rework || 0}</strong></div>
         <div class="stat"><span class="muted">Ironing</span><strong>${counts.ironing || 0}</strong></div>
-        <div class="stat"><span class="muted">Ready for pickup</span><strong>${counts.ready || 0}</strong></div>
+        <div class="stat"><span class="muted">Ready for handoff</span><strong>${counts.ready || 0}</strong></div>
       </div>
     </section>
   `;

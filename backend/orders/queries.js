@@ -68,6 +68,8 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     }
     for (const basket of baskets) {
       basket.images = imagesByBasketId.get(basket.id) || [];
+      basket.route_sheet_code = basket.basket_code;
+      basket.route_sheet_qr_code = basket.qr_code;
     }
 
     const scans = await orderQueryRepository.listRecentScansByOrderId(orderId);
@@ -133,6 +135,8 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       ready_to_place: Boolean(order.ready_to_place),
       ready_for_pickup: Boolean(order.ready_for_pickup),
       baskets,
+      route_sheets: baskets,
+      routeSheets: baskets,
       scans,
       pickup_placements: pickupPlacements,
       pickup_placement_count: pickupPlacements.length,

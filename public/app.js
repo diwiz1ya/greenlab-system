@@ -98,6 +98,10 @@ async function renderApp() {
     && state.screen === "station"
     && (state.currentStation === "washing" || state.currentStation === "drying")
     && allowedStations.includes(state.currentStation);
+  const shouldLoadIroningWorkbench = !managerView
+    && state.screen === "station"
+    && state.currentStation === "ironing"
+    && allowedStations.includes("ironing");
   const managerReadyOrderId = Number(state.managerReadyOrderId || 0);
   const selectedOrderId = Number(state.selectedOrderId || 0);
   const detailsOrderId = managerView && managerReadyOrderId > 0 ? managerReadyOrderId : selectedOrderId;
@@ -113,13 +117,14 @@ async function renderApp() {
       )
     );
 
-  const [overview, syncQueue, currentStationOrders, pickupWorkbench, qcTransferTasksPayload, machineWorkbenchPayload] = await Promise.all([
+  const [overview, syncQueue, currentStationOrders, pickupWorkbench, qcTransferTasksPayload, machineWorkbenchPayload, ironingWorkbenchPayload] = await Promise.all([
     shouldLoadOverview ? api("/api/overview") : Promise.resolve({ counts: {}, orders: [] }),
     shouldLoadSyncQueue ? api("/api/sync-queue") : Promise.resolve({ items: [], summary: null }),
     shouldLoadCurrentStationOrders ? api(`/api/orders?station=${state.currentStation}`) : Promise.resolve(null),
     shouldLoadPickupWorkbench ? api("/api/pickup/workbench") : Promise.resolve({ assemblyOrders: [], readyToPlaceOrders: [], placedOrders: [] }),
     shouldLoadQcTransferTasks ? api("/api/qc/transfer-tasks") : Promise.resolve({ tasks: [] }),
-    shouldLoadMachineWorkbench ? api(`/api/machines/workbench?station=${state.currentStation}`) : Promise.resolve({ station: null, machines: [] })
+    shouldLoadMachineWorkbench ? api(`/api/machines/workbench?station=${state.currentStation}`) : Promise.resolve({ station: null, machines: [] }),
+    shouldLoadIroningWorkbench ? api("/api/ironing/workbench") : Promise.resolve({ station: null, activeSessions: [] })
   ]);
   const qcTransferTasks = Array.isArray(qcTransferTasksPayload?.tasks) ? qcTransferTasksPayload.tasks : [];
   const machineWorkbench = {};
@@ -169,6 +174,7 @@ async function renderApp() {
     pickupWorkbench,
     qcTransferTasks,
     machineWorkbench,
+    ironingWorkbench: shouldLoadIroningWorkbench ? ironingWorkbenchPayload : null,
     orderDetails,
     syncQueue,
     notice
@@ -211,7 +217,7 @@ function syncModalBodyClass() {
   document.body.classList.toggle("modal-open", hasModal);
 }
 
-function renderScreenContent({ stations, overview, stationData, pickupWorkbench, qcTransferTasks, machineWorkbench, orderDetails, syncQueue, notice }) {
+function renderScreenContent({ stations, overview, stationData, pickupWorkbench, qcTransferTasks, machineWorkbench, ironingWorkbench, orderDetails, syncQueue, notice }) {
   const managerView = isManagerRole();
   const simpleScanView = !managerView
     && state.screen === "station"
@@ -255,7 +261,12 @@ function renderScreenContent({ stations, overview, stationData, pickupWorkbench,
   if (state.pickupAssemblyCompletionPrompt?.orderId && !pickupOrderIds.has(state.pickupAssemblyCompletionPrompt.orderId)) {
     state.pickupAssemblyCompletionPrompt = null;
   }
-  const placementReadyIds = new Set(pickupReadyToPlaceOrders.map((order) => Number(order.id)));
+  const placementReadyIds = new Set([
+    ...pickupReadyToPlaceOrders.map((order) => Number(order.id)),
+    ...pickupAssemblyOrders
+      .filter((order) => Number(order.scanned_baskets || 0) > 0 && Number(order.placement_count || 0) === 0)
+      .map((order) => Number(order.id))
+  ]);
   const placementDraft = state.pickupPlacementDraft && typeof state.pickupPlacementDraft === "object"
     ? state.pickupPlacementDraft
     : {
@@ -352,6 +363,7 @@ function renderScreenContent({ stations, overview, stationData, pickupWorkbench,
         state.submittingQcTransferRequestId,
         state.qcTransferScanDrafts,
         machineWorkbench[state.currentStation] || null,
+        ironingWorkbench,
         state.machineDrafts[state.currentStation] || null,
         state.submittingMachineAction
       )}

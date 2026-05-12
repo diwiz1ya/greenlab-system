@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const { parseImageDataUrl, validateImageBuffer } = require("./image-safety");
+const { buildReworkRouteSheetQr } = require("./route-sheet");
 
 function createReworkWorkflow(options) {
   const {
@@ -201,7 +202,7 @@ function createReworkWorkflow(options) {
       });
       const attempt = await getNextReworkAttempt(row.order_id, rootBasketId);
       plannedReworkBasketCode = buildReworkBasketCode(row.order_public_id, attempt);
-      plannedReworkBasketQrCode = `QR:${plannedReworkBasketCode}`;
+      plannedReworkBasketQrCode = buildReworkRouteSheetQr(plannedReworkBasketCode);
     }
 
     return {
@@ -363,11 +364,11 @@ function createReworkWorkflow(options) {
 
     const expectedSourceQrCode = String(request.source_basket_qr_code || "").trim();
     if (!sourceQrCodeInput) {
-      return { error: "Сначала отсканируйте исходную корзину.", status: 400 };
+      return { error: "Scan source route sheet first.", status: 400 };
     }
     if (normalizeQrCodeValue(sourceQrCodeInput) !== normalizeQrCodeValue(expectedSourceQrCode)) {
       return {
-        error: `Скан исходной корзины не совпадает. Ожидается ${expectedSourceQrCode}.`,
+        error: `Source route sheet scan does not match. Expected ${expectedSourceQrCode}.`,
         status: 400
       };
     }
@@ -387,14 +388,14 @@ function createReworkWorkflow(options) {
     });
     const attempt = await getNextReworkAttempt(request.order_id, rootBasketId);
     const reworkBasketCode = buildReworkBasketCode(request.order_public_id, attempt);
-    const expectedTargetQrCode = `QR:${reworkBasketCode}`;
+    const expectedTargetQrCode = buildReworkRouteSheetQr(reworkBasketCode);
 
     if (!targetQrCodeInput) {
-      return { error: "Сначала отсканируйте целевую rework-корзину.", status: 400 };
+      return { error: "Scan target rework route sheet first.", status: 400 };
     }
     if (normalizeQrCodeValue(targetQrCodeInput) !== normalizeQrCodeValue(expectedTargetQrCode)) {
       return {
-        error: `Скан целевой корзины не совпадает. Ожидается ${expectedTargetQrCode}.`,
+        error: `Target route sheet scan does not match. Expected ${expectedTargetQrCode}.`,
         status: 400
       };
     }
