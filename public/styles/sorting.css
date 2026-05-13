@@ -906,7 +906,13 @@ button.sorting-item-step.secondary:active {
 .sorting-review-summary {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.sorting-print-all-button {
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 16px;
+  white-space: nowrap;
 }
 .sorting-review-kpi {
   background: #f8fcfa;
@@ -919,6 +925,23 @@ button.sorting-item-step.secondary:active {
 .sorting-review-kpi strong {
   font-size: 20px;
   line-height: 1;
+}
+.sorting-review-kpi.ok {
+  background: linear-gradient(135deg, #e4f8ed, #f4fff8);
+  border-color: rgba(21, 111, 90, 0.36);
+  box-shadow: 0 10px 24px rgba(21, 111, 90, 0.1);
+}
+.sorting-review-kpi.warn {
+  background: linear-gradient(135deg, #fff1df, #fffaf3);
+  border-color: rgba(194, 94, 22, 0.34);
+}
+.sorting-step-panel-review.is-print-ready {
+  border-color: rgba(21, 111, 90, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(21, 111, 90, 0.08);
+}
+.sorting-step-panel-review.is-print-ready .sorting-submit:not(:disabled) {
+  background: linear-gradient(135deg, #0a6a52, #0d8a68);
+  box-shadow: 0 14px 28px rgba(13, 138, 104, 0.24);
 }
 .sorting-review-row {
   align-items: start;
@@ -1509,15 +1532,24 @@ button.sorting-item-step.secondary:active {
   }
   .sorting-step-panel-review .sorting-review-summary {
     gap: 6px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .sorting-step-panel-review .sorting-review-kpi {
     border-radius: 10px;
     gap: 2px;
-    padding: 7px 8px;
+    min-width: 0;
+    padding: 7px 6px;
   }
   .sorting-step-panel-review .sorting-review-kpi strong {
-    font-size: 16px;
+    font-size: 15px;
+  }
+  .sorting-step-panel-review .sorting-review-kpi .muted {
+    font-size: 11px;
+    line-height: 1.1;
+  }
+  .sorting-step-panel-review .sorting-print-all-button {
+    min-height: 34px;
+    padding: 6px 12px;
   }
   .sorting-step-panel-review .sorting-review-list {
     gap: 6px;

@@ -1693,42 +1693,6 @@ button[data-loading="1"] {
   padding: 0 16px;
 }
 
-.pickup-placement-stepper {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pickup-placement-step-item {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(17, 33, 28, 0.12);
-  border-radius: 999px;
-  display: inline-flex;
-  gap: 8px;
-  min-height: 40px;
-  padding: 8px 14px;
-}
-
-.pickup-placement-step-item.is-active {
-  border-color: rgba(15, 106, 84, 0.34);
-  color: #0f6a54;
-}
-
-.pickup-placement-step-item.is-done {
-  background: rgba(226, 242, 237, 0.82);
-  border-color: rgba(15, 106, 84, 0.28);
-}
-
-.pickup-placement-step-marker {
-  font-weight: 800;
-}
-
-.pickup-placement-step-arrow {
-  color: #687871;
-}
-
 .pickup-placement-step-card {
   display: grid;
   gap: 14px;
@@ -1768,13 +1732,6 @@ button[data-loading="1"] {
   justify-content: flex-start;
 }
 
-.pickup-placement-current-bin {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .pickup-placement-preview {
   display: grid;
   gap: 10px;
@@ -1787,8 +1744,7 @@ button[data-loading="1"] {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
 
-.pickup-placement-preview-row code,
-.pickup-placement-current-bin code {
+.pickup-placement-preview-row code {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(17, 33, 28, 0.12);
   border-radius: 12px;
@@ -1859,20 +1815,6 @@ button[data-loading="1"] {
     min-height: 42px;
     min-width: 42px;
     padding: 0 14px;
-  }
-
-  .pickup-placement-stepper {
-    display: none;
-  }
-
-  .pickup-placement-step-item {
-    font-size: 13px;
-    min-height: 34px;
-    padding: 7px 10px;
-  }
-
-  .pickup-placement-step-arrow {
-    display: none;
   }
 
   .pickup-placement-step-card {

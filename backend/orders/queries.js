@@ -14,6 +14,17 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function normalizeOverviewRouteSheets(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    try {
+      const parsed = JSON.parse(String(value));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   function parseBasketItemCounts(raw) {
     if (!raw) return null;
     try {
@@ -171,6 +182,8 @@ function createOrderQueryService(orderQueryRepository, options = {}) {
       ready_to_place: Boolean(row.ready_to_place),
       ready_for_pickup: Boolean(row.ready_for_pickup),
       basket_count: Number(row.basket_count || 0),
+      route_sheets: normalizeOverviewRouteSheets(row.route_sheets_json),
+      routeSheets: normalizeOverviewRouteSheets(row.route_sheets_json),
       rework_basket_count: Number(row.rework_basket_count || 0),
       pending_customer_approval_count: Number(row.pending_customer_approval_count || 0),
       pending_approval_since: row.pending_approval_since || null,

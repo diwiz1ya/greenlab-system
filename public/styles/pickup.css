@@ -410,56 +410,6 @@
   font-size: 13px;
 }
 
-.pickup-placement-stepper {
-  align-items: center;
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
-}
-
-.pickup-placement-step-item {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(17, 33, 28, 0.12);
-  border-radius: 999px;
-  color: #5c6b65;
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
-  gap: 4px;
-  min-height: 28px;
-  padding: 4px 9px;
-}
-
-.pickup-placement-step-item.is-active {
-  border-color: rgba(15, 106, 84, 0.36);
-  color: #0f6a54;
-}
-
-.pickup-placement-step-item.is-done {
-  background: rgba(227, 244, 237, 0.82);
-  border-color: rgba(15, 106, 84, 0.28);
-  color: #0f5d4a;
-}
-
-.pickup-placement-step-marker {
-  font-size: 12px;
-  line-height: 1;
-}
-
-.pickup-placement-step-arrow {
-  color: #6c7a74;
-  flex: 0 0 auto;
-  font-size: 11px;
-}
-
-.pickup-placement-modal-actions {
-  margin-top: 0;
-}
-
 .pickup-count-chips {
   display: flex;
   gap: 8px;
@@ -475,32 +425,6 @@
   background: var(--accent-soft);
   border-color: rgba(15, 106, 84, 0.34);
   color: #0f5f4b;
-}
-
-.pickup-placement-pairs {
-  display: grid;
-  gap: 8px;
-}
-
-.pickup-placement-row {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(17, 33, 28, 0.1);
-  border-radius: 10px;
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-}
-
-.pickup-placement-row-head {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.pickup-placement-row input {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .pickup-placement-step-card {
@@ -525,26 +449,6 @@
 
 .pickup-placement-step-actions button {
   min-height: 40px;
-}
-
-.pickup-placement-current-bin {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-}
-
-.pickup-placement-current-bin code {
-  background: #f6f4ef;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 9px;
-}
-
-.pickup-placement-actions {
-  align-items: center;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pickup-placement-clear-link {
@@ -757,10 +661,6 @@
     padding: 6px 8px;
   }
 
-  .pickup-placement-actions {
-    grid-template-columns: 1fr;
-  }
-
   .pickup-placement-modal-sheet {
     border-radius: 20px;
     gap: 8px;
@@ -778,12 +678,6 @@
     font-size: 17px;
   }
 
-  .pickup-placement-step-item {
-    font-size: 11px;
-    min-height: 26px;
-    padding: 4px 8px;
-  }
-
   .pickup-placement-step-card input {
     font-size: 16px;
     min-height: 44px;
@@ -793,8 +687,7 @@
     min-height: 38px;
   }
 
-  .pickup-placement-clear-link,
-  .pickup-placement-actions button {
+  .pickup-placement-clear-link {
     min-height: 38px;
   }
 

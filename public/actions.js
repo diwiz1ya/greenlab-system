@@ -404,6 +404,11 @@ export function bindGlobalActions(renderApp, renderLogin) {
         await renderApp();
         return;
       }
+      if (state.managerFlowStage) {
+        state.managerFlowStage = null;
+        await renderApp();
+        return;
+      }
       if (state.managerReadyOrderId) {
         state.managerReadyOrderId = null;
         await renderApp();
@@ -495,6 +500,7 @@ export function bindGlobalActions(renderApp, renderLogin) {
       const focusAnchor = String(button.dataset.openOrderFocus || "").trim();
       state.managerSyncModalOpen = false;
       state.managerQuickView = null;
+      state.managerFlowStage = null;
       state.managerReadyOrderId = null;
       state.managerHistoryModalOpen = false;
       state.managerReportsModalOpen = false;

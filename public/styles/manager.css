@@ -625,25 +625,77 @@
 }
 
 .manager-ready-order-sheet {
-  gap: 10px;
+  gap: 12px;
   width: min(760px, 100%);
 }
 
 .manager-ready-order-head {
-  gap: 10px;
-  padding-bottom: 8px;
+  align-items: start;
+  gap: 12px;
+  padding-bottom: 10px;
 }
 
 .manager-ready-order-head-main {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .manager-ready-order-head-main h3 {
-  font-size: clamp(30px, 2.6vw, 40px);
+  font-size: clamp(42px, 5vw, 64px);
   letter-spacing: -0.02em;
-  line-height: 1;
+  line-height: 0.92;
   margin: 0;
+}
+
+.manager-ready-order-status {
+  background: #09251c;
+  border-radius: 999px;
+  color: #f4fff8;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  justify-self: start;
+  letter-spacing: 0.12em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+}
+
+.manager-ready-order-customer {
+  color: #33453f;
+  font-size: clamp(22px, 2.4vw, 32px);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.manager-ready-order-hero {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+}
+
+.manager-ready-order-hero > div {
+  background: linear-gradient(135deg, #f2fbf5, #ffffff);
+  border: 1px solid rgba(21, 111, 90, 0.18);
+  border-radius: 16px;
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+}
+
+.manager-ready-order-hero span {
+  color: #5d6d67;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.manager-ready-order-hero strong {
+  color: #10251e;
+  font-size: clamp(22px, 2.6vw, 34px);
+  letter-spacing: -0.02em;
+  line-height: 1.05;
 }
 
 .manager-ready-order-body {
@@ -697,7 +749,9 @@
 
 .manager-ready-order-placement-item span {
   color: #33453f;
-  font-size: 13px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -754,8 +808,9 @@
 }
 
 .manager-ready-order-actions button {
-  min-height: 42px;
-  min-width: 180px;
+  font-size: 18px;
+  min-height: 56px;
+  min-width: 220px;
 }
 
 .manager-history-modal {
@@ -963,14 +1018,42 @@
 
 .manager-flow-row {
   align-items: center;
+  appearance: none;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(17, 33, 28, 0.1);
   border-radius: 11px;
+  color: inherit;
+  cursor: pointer;
   display: grid;
+  font: inherit;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 42px;
   padding: 6px 10px;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  width: 100%;
+}
+
+.manager-flow-row.is-openable:hover {
+  border-color: rgba(19, 124, 102, 0.32);
+  box-shadow: 0 8px 18px rgba(17, 33, 28, 0.07);
+}
+
+.manager-flow-row.is-openable:active {
+  background: rgba(244, 250, 247, 0.98);
+  box-shadow: none;
+  transform: translateY(1px);
+}
+
+.manager-flow-row:focus-visible {
+  outline: 2px solid rgba(15, 106, 84, 0.32);
+  outline-offset: 2px;
+}
+
+.manager-flow-row.is-empty {
+  cursor: default;
+  opacity: 0.82;
 }
 
 .manager-flow-row.warn {
@@ -1014,6 +1097,259 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
   width: 54px;
+}
+
+.manager-flow-modal {
+  align-items: end;
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  padding: 0;
+  position: fixed;
+  z-index: 86;
+}
+
+.manager-flow-modal-backdrop {
+  background: rgba(12, 24, 20, 0.28);
+  cursor: pointer;
+  inset: 0;
+  position: absolute;
+  z-index: 0;
+}
+
+.manager-flow-sheet {
+  border-radius: 24px 24px 0 0;
+  gap: 12px;
+  max-height: min(82dvh, 720px);
+  overscroll-behavior: contain;
+  padding: 16px;
+  position: relative;
+  transform-origin: bottom center;
+  width: min(720px, 100%);
+  z-index: 1;
+  animation: manager-flow-sheet-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.manager-flow-sheet-head {
+  align-items: start;
+  border-bottom: 1px solid rgba(17, 33, 28, 0.08);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-bottom: 12px;
+}
+
+.manager-flow-sheet-head h3 {
+  font-size: clamp(28px, 5vw, 44px);
+  letter-spacing: -0.03em;
+  line-height: 0.96;
+  margin: 2px 0 0;
+}
+
+.manager-flow-sheet-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manager-flow-sheet-summary > div {
+  background: linear-gradient(135deg, #f6fbf8, #ffffff);
+  border: 1px solid rgba(17, 33, 28, 0.08);
+  border-radius: 16px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.manager-flow-sheet-summary > div.warn {
+  background: linear-gradient(135deg, #fff8ea, #ffffff);
+  border-color: rgba(171, 122, 0, 0.18);
+}
+
+.manager-flow-sheet-summary > div.critical {
+  background: linear-gradient(135deg, #fff0ea, #ffffff);
+  border-color: rgba(196, 70, 31, 0.2);
+}
+
+.manager-flow-sheet-summary span {
+  color: #66766f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manager-flow-sheet-summary strong {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.manager-flow-order-list {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+}
+
+.manager-flow-order {
+  align-items: center;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(17, 33, 28, 0.1);
+  border-radius: 16px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 74px;
+  padding: 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.manager-flow-order.warn {
+  border-color: rgba(171, 122, 0, 0.2);
+}
+
+.manager-flow-order.critical {
+  border-color: rgba(196, 70, 31, 0.24);
+}
+
+.manager-flow-order-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.manager-flow-order-main strong {
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.manager-flow-order-main span,
+.manager-flow-order-main em {
+  color: #5d6d67;
+  font-size: 12px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-flow-order-main .manager-flow-order-route {
+  color: #10251e;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: -0.01em;
+}
+
+.manager-flow-order-side {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.manager-flow-order-risk {
+  align-items: center;
+  background: rgba(17, 33, 28, 0.04);
+  border: 1px solid rgba(17, 33, 28, 0.08);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 800;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 8px;
+}
+
+.manager-flow-order-risk.warn {
+  background: rgba(253, 244, 231, 0.92);
+  border-color: rgba(171, 122, 0, 0.18);
+  color: #8a6100;
+}
+
+.manager-flow-order-risk.critical {
+  background: rgba(252, 233, 227, 0.94);
+  border-color: rgba(196, 70, 31, 0.2);
+  color: #a73c1b;
+}
+
+.manager-flow-order-open {
+  color: #0f6a54;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@keyframes manager-flow-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .manager-flow-row {
+    min-height: 50px;
+    padding: 9px 12px;
+  }
+
+  .manager-flow-name {
+    font-size: 15px;
+  }
+
+  .manager-flow-meta {
+    grid-template-columns: 56px 64px;
+  }
+
+  .manager-flow-count {
+    font-size: 13px;
+    padding: 5px 0;
+    width: 56px;
+  }
+
+  .manager-flow-time {
+    font-size: 12px;
+    width: 64px;
+  }
+
+  .manager-flow-sheet {
+    border-radius: 28px 28px 0 0;
+    max-height: calc(100dvh - 72px);
+    padding: 14px;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    width: 100%;
+  }
+
+  .manager-flow-sheet-head {
+    align-items: center;
+  }
+
+  .manager-flow-sheet-head h3 {
+    font-size: 34px;
+  }
+
+  .manager-flow-sheet-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .manager-flow-order {
+    border-radius: 18px;
+    min-height: 82px;
+    padding: 13px;
+  }
+
+  .manager-flow-order-main strong {
+    font-size: 24px;
+  }
 }
 
 .manager-integration-row {
@@ -2018,15 +2354,37 @@
   }
 
   .manager-ex-row {
-    gap: 4px;
-    grid-template-columns: 1fr;
-    min-height: 0;
+    align-items: start;
+    gap: 10px;
+    grid-template-columns: 1fr auto;
+    min-height: 92px;
+    padding: 12px 12px 14px;
   }
 
-  .manager-ex-row-station,
-  .manager-ex-row-time,
-  .manager-ex-row .pill {
+  .manager-ex-row-main {
+    grid-column: 1 / -1;
+  }
+
+  .manager-ex-row-main strong {
+    font-size: 18px;
+  }
+
+  .manager-ex-row-main span {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .manager-ex-row-station {
+    display: inline-flex;
     justify-self: start;
+  }
+
+  .manager-ex-row-time {
+    justify-self: end;
+  }
+
+  .manager-ex-row .pill {
+    display: none;
   }
 
   .manager-priority-empty-copy {
@@ -2054,7 +2412,19 @@
   }
 
   .manager-ready-order-head-main h3 {
-    font-size: 34px;
+    font-size: 46px;
+  }
+
+  .manager-ready-order-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-ready-order-hero > div {
+    padding: 12px 14px;
+  }
+
+  .manager-ready-order-hero strong {
+    font-size: 24px;
   }
 
   .manager-ready-order-card strong {
@@ -2068,6 +2438,10 @@
 
   .manager-ready-order-placement-item strong {
     margin-bottom: 2px;
+  }
+
+  .manager-ready-order-placement-item span {
+    font-size: 24px;
   }
 
   .manager-ready-order-placement-item em {

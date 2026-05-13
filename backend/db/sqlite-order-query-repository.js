@@ -112,6 +112,19 @@ function createSqliteOrderQueryRepository(db) {
         WHERE b.order_id = o.id
       ) AS basket_count,
       (
+        SELECT COALESCE(json_group_array(json_object(
+          'id', b.id,
+          'basket_code', b.basket_code,
+          'basket_type', b.basket_type,
+          'basket_kind', COALESCE(b.basket_kind, 'main'),
+          'station', b.station,
+          'status', b.status,
+          'qr_code', b.qr_code
+        )), '[]')
+        FROM baskets b
+        WHERE b.order_id = o.id
+      ) AS route_sheets_json,
+      (
         SELECT COUNT(*)
         FROM baskets b
         WHERE b.order_id = o.id AND COALESCE(b.basket_kind, 'main') = 'rework'

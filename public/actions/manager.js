@@ -777,6 +777,7 @@ export function bindManagerActions(renderApp, renderLogin) {
       state.managerReadyOrderId = null;
       state.managerQuickView = null;
       state.managerQuickViewAnchorY = null;
+      state.managerFlowStage = null;
       state.managerHistoryModalOpen = false;
       state.managerReportsModalOpen = false;
       state.managerSyncModalOpen = true;
@@ -790,6 +791,7 @@ export function bindManagerActions(renderApp, renderLogin) {
       if (!nextView) return;
       state.selectedOrderId = null;
       state.managerReadyOrderId = null;
+      state.managerFlowStage = null;
       state.managerSyncModalOpen = false;
       state.managerHistoryModalOpen = false;
       state.managerReportsModalOpen = false;
@@ -805,6 +807,7 @@ export function bindManagerActions(renderApp, renderLogin) {
       state.managerReadyOrderId = null;
       state.managerQuickView = null;
       state.managerQuickViewAnchorY = null;
+      state.managerFlowStage = null;
       state.managerSyncModalOpen = false;
       state.managerReportsModalOpen = false;
       closeManagerActionDialog();
@@ -820,6 +823,7 @@ export function bindManagerActions(renderApp, renderLogin) {
       state.managerReadyOrderId = null;
       state.managerQuickView = null;
       state.managerQuickViewAnchorY = null;
+      state.managerFlowStage = null;
       state.managerSyncModalOpen = false;
       state.managerHistoryModalOpen = false;
       closeManagerActionDialog();
@@ -863,6 +867,7 @@ export function bindManagerActions(renderApp, renderLogin) {
       state.managerSyncModalOpen = false;
       state.managerQuickView = null;
       state.managerQuickViewAnchorY = null;
+      state.managerFlowStage = null;
       state.managerHistoryModalOpen = false;
       state.managerReportsModalOpen = false;
       state.managerReadyOrderId = orderId;
@@ -881,6 +886,30 @@ export function bindManagerActions(renderApp, renderLogin) {
     button.addEventListener("click", async () => {
       state.managerQuickView = null;
       state.managerQuickViewAnchorY = null;
+      await renderApp();
+    });
+  }
+
+  for (const button of document.querySelectorAll("[data-open-manager-flow-stage]")) {
+    button.addEventListener("click", async () => {
+      const stage = String(button.dataset.openManagerFlowStage || "").trim();
+      if (!stage || button.disabled) return;
+      state.selectedOrderId = null;
+      state.managerReadyOrderId = null;
+      state.managerQuickView = null;
+      state.managerQuickViewAnchorY = null;
+      state.managerSyncModalOpen = false;
+      state.managerHistoryModalOpen = false;
+      state.managerReportsModalOpen = false;
+      closeManagerActionDialog();
+      state.managerFlowStage = stage;
+      await renderApp();
+    });
+  }
+
+  for (const button of document.querySelectorAll("[data-close-manager-flow-stage]")) {
+    button.addEventListener("click", async () => {
+      state.managerFlowStage = null;
       await renderApp();
     });
   }
@@ -1008,6 +1037,7 @@ export function bindManagerActions(renderApp, renderLogin) {
         state.sortingDrafts = {};
         state.managerQuickView = null;
         state.managerQuickViewAnchorY = null;
+        state.managerFlowStage = null;
         state.managerReadyOrderId = null;
         state.managerSyncModalOpen = false;
         state.managerHistoryModalOpen = false;

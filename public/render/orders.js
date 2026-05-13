@@ -739,9 +739,9 @@ function buildTimelineDefinitions(order, baskets, reworkRequests, latestScans) {
       summary: isAwaitingCleanCloudClose(order)
         ? "Customer handoff is confirmed. Finalization in CleanCloud is required."
         : (order.ready_for_pickup
-          ? "Order is placed in a storage location and ready for customer handoff."
+          ? "Order is assigned to a storage location and ready for customer handoff."
           : (order.ready_to_place
-            ? "Order is assembled. BIN -> LOC placement is required."
+            ? "Order is assembled. Assign a storage location before handoff."
             : shortenText(latestScans.get("pickup")?.message || "Waiting for full dispatch assembly."))),
       meta: order.ready_for_pickup
         ? "Placed"

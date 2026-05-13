@@ -103,6 +103,26 @@ function createSortingWorkflow(options) {
     return Math.min(999, Math.floor(parsed));
   }
 
+  function validateRouteSheetsPrinted(baskets) {
+    const list = Array.isArray(baskets) ? baskets : [];
+    for (let index = 0; index < list.length; index += 1) {
+      const basket = list[index];
+      if (normalizeLabelPrintCount(basket?.labelPrintCount ?? basket?.label_print_count) <= 0) {
+        return {
+          error: `Print route sheet ${index + 1} before finishing sorting.`,
+          status: 400
+        };
+      }
+      if (!normalizeLabelPrintedAt(basket?.labelPrintedAt || basket?.label_printed_at)) {
+        return {
+          error: `Route sheet ${index + 1} print timestamp is missing. Reprint it before finishing sorting.`,
+          status: 400
+        };
+      }
+    }
+    return { ok: true };
+  }
+
   async function listKnownCatalogQrs() {
     const rows = await sortingRepository.listKnownCatalogQrs();
     return rows.map((row) => normalizeBasketQrCode(row.qr_code)).filter(Boolean);
@@ -355,6 +375,10 @@ function createSortingWorkflow(options) {
     if (prepared.error) {
       return prepared;
     }
+    const printValidation = validateRouteSheetsPrinted(prepared.baskets);
+    if (printValidation.error) {
+      return printValidation;
+    }
     const qrConflict = await findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode));
     if (qrConflict) {
       return { error: `QR ${qrConflict} is already used by another order.`, status: 409 };
@@ -406,6 +430,10 @@ function createSortingWorkflow(options) {
     });
     if (prepared.error) {
       return prepared;
+    }
+    const printValidation = validateRouteSheetsPrinted(prepared.baskets);
+    if (printValidation.error) {
+      return printValidation;
     }
     const qrConflict = await findConflictingQrCode(prepared.baskets.map((basket) => basket.qrCode), orderId);
     if (qrConflict) {

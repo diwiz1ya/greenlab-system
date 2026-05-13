@@ -281,7 +281,7 @@ function renderSortingPhotoEditor(orderId, rowIndex, row) {
   return `
     <section class="sorting-photo-editor">
       <div class="sorting-photo-grid compact">
-        <section class="sorting-photo-card ${overviewPhoto ? "has-photo" : ""}">
+        <section class="sorting-photo-card ${overviewPhoto ? "has-photo" : ""}" data-sorting-photo-card="overview" data-row-index="${rowIndex}">
           <div class="sorting-photo-card-head">
             <strong>${sortingPhotoRoleLabels.overview}</strong>
           </div>
@@ -319,7 +319,7 @@ function renderSortingPhotoEditor(orderId, rowIndex, row) {
             </label>
           </div>
         </section>
-        <section class="sorting-photo-card">
+        <section class="sorting-photo-card" data-sorting-photo-card="issue" data-row-index="${rowIndex}">
           <div class="sorting-photo-card-head">
             <strong>${sortingPhotoRoleLabels.issue}</strong>
           </div>
@@ -486,15 +486,18 @@ function renderSortingReview(orderId, rows, options = {}) {
   const submitActionAttr = String(options.submitActionAttr || "data-create-baskets");
   const submitLabel = String(options.submitLabel || "Finish");
   const hasEmptyRows = Boolean(options.hasEmptyRows);
+  const allSheetsPrinted = Boolean(options.allSheetsPrinted);
+  const printedCount = Number(options.printedCount || 0);
   const isSingleBasket = rows.length === 1;
   const backLabel = isSingleBasket ? "To route sheet" : "To route sheets";
   const totals = getRowsItemsTotals(rows);
   const photosTotal = getRowsPhotosTotal(rows);
+  const submitDisabled = hasEmptyRows || !allSheetsPrinted;
   return `
-    <section class="sorting-step-panel sorting-step-panel-review">
+    <section class="sorting-step-panel sorting-step-panel-review ${allSheetsPrinted ? "is-print-ready" : "needs-print"}">
       <div class="sorting-basket-head">
         <strong>Final review</strong>
-        <button type="button" class="secondary" data-sorting-print-all="${orderId}">Print sheets (${rows.length})</button>
+        <button type="button" class="secondary sorting-print-all-button" data-sorting-print-all="${orderId}">Print all</button>
       </div>
       <div class="sorting-review-summary">
         <article class="sorting-review-kpi">
@@ -509,7 +512,14 @@ function renderSortingReview(orderId, rows, options = {}) {
           <span class="muted">Photos</span>
           <strong>${photosTotal}</strong>
         </article>
+        <article class="sorting-review-kpi ${allSheetsPrinted ? "ok" : "warn"}">
+          <span class="muted">Printed</span>
+          <strong>${printedCount}/${rows.length}</strong>
+        </article>
       </div>
+      ${allSheetsPrinted
+        ? ""
+        : `<div class="notice warn">Print every route sheet before finishing sorting.</div>`}
       <div class="sorting-review-list">
         ${rows.map((row, index) => {
           const counts = getRowItemCounts(row);
@@ -545,7 +555,7 @@ function renderSortingReview(orderId, rows, options = {}) {
                   ${isSingleBasket
                     ? ""
                     : `<button type="button" class="secondary" data-sorting-open-basket="${orderId}" data-row-index="${index}">Edit</button>`}
-                  <button type="button" class="secondary" data-sorting-print-row="${orderId}" data-row-index="${index}">Print</button>
+                  <button type="button" class="secondary" data-sorting-print-row="${orderId}" data-row-index="${index}">${printCount > 0 ? "Reprint" : "Print this sheet"}</button>
                 </div>
               </div>
             </article>
@@ -554,7 +564,7 @@ function renderSortingReview(orderId, rows, options = {}) {
       </div>
       <div class="sorting-step-actions review-actions">
         <button type="button" class="secondary" data-sorting-step-prev="${orderId}">${backLabel}</button>
-        <button type="button" class="sorting-submit" ${submitActionAttr}="${orderId}" ${hasEmptyRows ? "disabled" : ""}>${escapeHtml(submitLabel)}</button>
+        <button type="button" class="sorting-submit" ${submitActionAttr}="${orderId}" ${submitDisabled ? "disabled" : ""}>${escapeHtml(submitLabel)}</button>
       </div>
     </section>
   `;
@@ -646,6 +656,8 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
   const activeBasketIndex = Math.max(0, Math.min(Number(draft?.activeRowIndex || 0), Math.max(0, rows.length - 1)));
   const rowsTotals = getRowsItemsTotals(rows);
   const hasEmptyRows = hasNoRows || rows.some((row) => getRowItemsTotal(row) <= 0);
+  const printedCount = rows.filter((row) => normalizeItemCount(row?.labelPrintCount ?? row?.label_print_count) > 0).length;
+  const allSheetsPrinted = rows.length > 0 && printedCount === rows.length;
   const isScanReturnStep = false;
 
   return `
@@ -682,7 +694,9 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
                 ? renderSortingReview(order.id, rows, {
                     submitActionAttr,
                     submitLabel,
-                    hasEmptyRows
+                    hasEmptyRows,
+                    printedCount,
+                    allSheetsPrinted
                   })
                 : ""}
             </div>
@@ -711,6 +725,7 @@ export function renderSortingEditorModal(order, rows, draft = {}) {
             ${step === 3 ? `<span class="pill">route sheets ready: ${rows.length}/${rows.length}</span>` : ""}
             ${step === 3 ? `<span class="pill">items: ${rowsTotals.total}</span>` : ""}
             ${step !== 1 && hasEmptyRows ? '<span class="pill warn">fill all route sheets</span>' : ""}
+            ${step === 3 && !allSheetsPrinted ? '<span class="pill warn">print all route sheets</span>' : ""}
           </div>
         </footer>
       </article>

@@ -48,6 +48,7 @@ export const state = {
   managerFilter: "",
   managerQuickView: null,
   managerQuickViewAnchorY: null,
+  managerFlowStage: null,
   managerReadyOrderId: null,
   managerSyncModalOpen: false,
   managerHistoryModalOpen: false,
@@ -161,6 +162,7 @@ export function resetSession() {
   state.managerFilter = "";
   state.managerQuickView = null;
   state.managerQuickViewAnchorY = null;
+  state.managerFlowStage = null;
   state.managerReadyOrderId = null;
   state.managerSyncModalOpen = false;
   state.managerHistoryModalOpen = false;

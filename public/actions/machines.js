@@ -766,7 +766,7 @@ export function bindMachineActions(renderApp) {
         return;
       }
       if (!isMachineFlowBasketQr(qrCode)) {
-        await notifyAndRender(renderApp, "warn", "Route sheet QR is required (QR:RS-001; legacy QR:BIN-001 still works).");
+        await notifyAndRender(renderApp, "warn", "Route sheet QR is required.");
         return;
       }
       if (draft.stagedBasketQrs.includes(qrCode)) {
@@ -856,7 +856,7 @@ export function bindMachineActions(renderApp) {
         return;
       }
       if (!basketQrs.every((qrCode) => isMachineFlowBasketQr(qrCode))) {
-        await notifyAndRender(renderApp, "warn", "Only route sheet QR is allowed in cycle (QR:RS-001; legacy QR:BIN-001 still works).");
+        await notifyAndRender(renderApp, "warn", "Only route sheet QR is allowed in cycle.");
         return;
       }
       if (basketQrs.length > 1) {
@@ -1056,7 +1056,7 @@ export function bindMachineActions(renderApp) {
         return;
       }
       if (!isMachineFlowBasketQr(basketQr)) {
-        await notifyAndRender(renderApp, "warn", "Route sheet QR is required for unload (QR:RS-001; legacy QR:BIN-001 still works).");
+        await notifyAndRender(renderApp, "warn", "Route sheet QR is required for unload.");
         return;
       }
 

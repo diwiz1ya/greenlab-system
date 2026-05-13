@@ -1124,23 +1124,36 @@ function formatOrderItemsLine(order) {
   return `${parts.join(" · ")} · Total ${totals.total}`;
 }
 
+function isStorageBinPlaceholder(value) {
+  return String(value || "").trim().toUpperCase().startsWith("NO-STORAGE-BIN:");
+}
+
+function formatStorageLocationLabel(value) {
+  const location = String(value || "").trim();
+  return location ? formatQrFull(location) : "Location not assigned";
+}
+
 function renderPlacementList(order) {
   const placements = Array.isArray(order?.pickup_placements) ? order.pickup_placements : [];
   if (placements.length) {
     return `
       <div class="manager-ready-order-placement-list">
-        ${placements.map((placement) => `
-          <div class="manager-ready-order-placement-item">
-            <strong>Basket ${Number(placement.slot_index || 1)}</strong>
-            <span>${escapeHtml(formatQrFull(placement.bin_qr_code))}</span>
-            <em>→</em>
-            <span>${escapeHtml(formatQrFull(placement.location_qr_code))}</span>
-          </div>
-        `).join("")}
+        ${placements.map((placement) => {
+          const binQr = String(placement.bin_qr_code || "").trim();
+          const locationQr = String(placement.location_qr_code || "").trim();
+          const showLegacyBin = binQr && !isStorageBinPlaceholder(binQr);
+          return `
+            <div class="manager-ready-order-placement-item">
+              <strong>${escapeHtml(placements.length > 1 ? `Storage slot ${Number(placement.slot_index || 1)}` : "Storage location")}</strong>
+              ${showLegacyBin ? `<span>${escapeHtml(formatQrFull(binQr))}</span><em>→</em>` : ""}
+              <span>${escapeHtml(formatStorageLocationLabel(locationQr))}</span>
+            </div>
+          `;
+        }).join("")}
       </div>
     `;
   }
-  return '<div class="manager-ready-order-empty muted">BIN/LOC placement is not recorded.</div>';
+  return '<div class="manager-ready-order-empty muted">Storage location is not assigned.</div>';
 }
 
 function renderMachineUsage(order) {
@@ -1175,6 +1188,7 @@ function renderMachineUsage(order) {
 
 export function renderManagerReadyOrderModal(order) {
   if (!order) return "";
+  const customerName = String(order.customer_name || "").trim() || "Customer";
 
   return `
     <section class="manager-sync-modal manager-ready-order-modal" role="dialog" aria-modal="true" aria-label="Customer handoff order">
@@ -1182,26 +1196,32 @@ export function renderManagerReadyOrderModal(order) {
       <article class="manager-sync-modal-sheet manager-ready-order-sheet">
         <header class="manager-sync-modal-head manager-ready-order-head">
           <div class="manager-ready-order-head-main">
-            <div class="eyebrow">Customer handoff</div>
+            <div class="manager-ready-order-status">Ready for handoff</div>
             <h3>${escapeHtml(order.public_id || "Order")}</h3>
-            <div class="muted">${escapeHtml(String(order.customer_name || "").trim())}</div>
+            <div class="manager-ready-order-customer">${escapeHtml(customerName)}</div>
           </div>
           <div class="manager-sync-modal-actions">
             <button class="secondary" data-close-manager-ready-modal>Close</button>
           </div>
         </header>
+        <section class="manager-ready-order-hero">
+          <div>
+            <span>Customer</span>
+            <strong>${escapeHtml(customerName)}</strong>
+          </div>
+          <div>
+            <span>Phone</span>
+            <strong>${escapeHtml(formatOrderPhone(order.customer_phone))}</strong>
+          </div>
+        </section>
         <div class="manager-ready-order-body">
           <article class="manager-ready-order-card">
-            <span class="manager-ready-order-label">Customer phone</span>
-            <strong>${escapeHtml(formatOrderPhone(order.customer_phone))}</strong>
+            <span class="manager-ready-order-label">Storage location</span>
+            ${renderPlacementList(order)}
           </article>
           <article class="manager-ready-order-card">
             <span class="manager-ready-order-label">Item breakdown</span>
             <strong>${escapeHtml(formatOrderItemsLine(order))}</strong>
-          </article>
-          <article class="manager-ready-order-card">
-            <span class="manager-ready-order-label">Storage location</span>
-            ${renderPlacementList(order)}
           </article>
           <article class="manager-ready-order-card">
             <span class="manager-ready-order-label">Machines</span>
@@ -1406,6 +1426,7 @@ function buildFlowStageRows(orders, nowMs = Date.now()) {
       : (oldestMinutes > Math.round(managerSlaMinutes.stalled * 0.66) ? "warn" : "ok");
     return {
       ...stage,
+      orders: items,
       count: items.length,
       oldestMinutes,
       tone
@@ -1414,14 +1435,96 @@ function buildFlowStageRows(orders, nowMs = Date.now()) {
 }
 
 function renderFlowStageRow(stage) {
+  const canOpen = stage.count > 0;
   return `
-    <div class="manager-flow-row ${stage.tone}">
+    <button
+      type="button"
+      class="manager-flow-row ${stage.tone} ${canOpen ? "is-openable" : "is-empty"}"
+      data-open-manager-flow-stage="${escapeHtml(stage.key)}"
+      ${canOpen ? "" : "disabled"}
+      aria-label="${escapeHtml(`${stage.label}: ${stage.count} orders`)}"
+    >
       <span class="manager-flow-name">${escapeHtml(stage.label)}</span>
       <span class="manager-flow-meta">
         <span class="manager-flow-count">${stage.count}</span>
         <span class="manager-flow-time">${escapeHtml(stage.count ? formatDurationCompact(stage.oldestMinutes) : "—")}</span>
       </span>
-    </div>
+    </button>
+  `;
+}
+
+function renderManagerFlowOrderRow(order, nowMs = Date.now()) {
+  const risk = getOrderRiskSnapshot(order, nowMs);
+  const riskToneClass = getRiskToneClass(risk.tone);
+  const age = getAgeMinutes(order.updated_at, nowMs);
+  const stationLabel = stationStatusLabels[order.status] || order.status;
+  const itemsTotal = Number(order.total_items || 0);
+  const routeSheets = Array.isArray(order.route_sheets) ? order.route_sheets : (Array.isArray(order.routeSheets) ? order.routeSheets : []);
+  const routeSheetLabel = routeSheets.length
+    ? routeSheets.map((sheet) => String(sheet.qr_code || sheet.basket_code || "").trim().replace(/^QR:/i, "")).filter(Boolean).join(" · ")
+    : "";
+  const details = [
+    stationLabel,
+    itemsTotal > 0 ? `${itemsTotal} items` : "",
+    Number.isFinite(age) ? `${formatDurationCompact(age)} here` : ""
+  ].filter(Boolean).join(" · ");
+
+  return `
+    <button type="button" class="manager-flow-order ${riskToneClass}" ${getOpenOrderActionAttributes(order)}>
+      <div class="manager-flow-order-main">
+        <strong>${escapeHtml(order.public_id)}</strong>
+        <span>${escapeHtml(order.customer_name || "Customer")}</span>
+        ${routeSheetLabel ? `<span class="manager-flow-order-route">Route sheets: ${escapeHtml(routeSheetLabel)}</span>` : ""}
+        <em>${escapeHtml(details || "Current order")}</em>
+      </div>
+      <div class="manager-flow-order-side">
+        <span class="manager-flow-order-risk ${riskToneClass}">
+          ${renderManagerGlyph(risk.icon || "clock")}
+          <span>${escapeHtml(risk.value || "—")}</span>
+        </span>
+        <span class="manager-flow-order-open">Open</span>
+      </div>
+    </button>
+  `;
+}
+
+function renderManagerFlowStageDrawer(flowRows, activeStageKey, nowMs = Date.now()) {
+  if (!activeStageKey) return "";
+  const stage = flowRows.find((row) => row.key === activeStageKey);
+  if (!stage) return "";
+  const orders = sortOrdersByPain(dedupeOrdersById(stage.orders || []), nowMs);
+  const oldestLabel = stage.count ? formatDurationCompact(stage.oldestMinutes) : "—";
+
+  return `
+    <section class="manager-flow-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(stage.label)} queue">
+      <div class="manager-flow-modal-backdrop" data-close-manager-flow-stage></div>
+      <article class="manager-sync-modal-sheet manager-flow-sheet">
+        <header class="manager-flow-sheet-head">
+          <div>
+            <span class="manager-column-eyebrow">Flow queue</span>
+            <h3>${escapeHtml(stage.label)}</h3>
+          </div>
+          <button type="button" class="secondary" data-close-manager-flow-stage>Close</button>
+        </header>
+        <section class="manager-flow-sheet-summary">
+          <div>
+            <span>Orders</span>
+            <strong>${stage.count}</strong>
+          </div>
+          <div class="${stage.tone}">
+            <span>Oldest</span>
+            <strong>${escapeHtml(oldestLabel)}</strong>
+          </div>
+        </section>
+        <div class="manager-flow-order-list">
+          ${
+            orders.length
+              ? orders.map((order) => renderManagerFlowOrderRow(order, nowMs)).join("")
+              : renderManagerEmptyCard("No orders here.", "This queue will populate automatically when orders reach this stage.")
+          }
+        </div>
+      </article>
+    </section>
   `;
 }
 
@@ -1569,6 +1672,8 @@ export function renderManagerOverviewCompact(orders, syncSummary = {}, filterQue
     const age = getAgeMinutes(order.pending_qc_task_since, nowMs);
     return Number.isFinite(age) && age > managerSlaMinutes.transfer;
   }).length;
+  const quickModal = options.quickView ? renderManagerQuickViewModal(data, options.quickView, options.quickViewAnchorY) : "";
+  const flowModal = renderManagerFlowStageDrawer(flowRows, options.flowStage, nowMs);
 
   return `
     <section class="panel stack manager-command-panel">
@@ -1653,8 +1758,9 @@ export function renderManagerOverviewCompact(orders, syncSummary = {}, filterQue
           </div>
         </section>
       </div>
-      ${options.quickView ? renderManagerQuickViewModal(data, options.quickView, options.quickViewAnchorY) : ""}
     </section>
+    ${quickModal}
+    ${flowModal}
   `;
 }
 

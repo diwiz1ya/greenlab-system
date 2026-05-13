@@ -403,6 +403,36 @@ function focusSortingScanInput(orderId) {
   }, 0);
 }
 
+function restoreSortingPhotoPosition(orderId, rowIndex, role) {
+  const safeRole = String(role || "").trim() === "overview" ? "overview" : "issue";
+  const safeRowIndex = Number(rowIndex);
+  if (!Number.isFinite(orderId) || !Number.isFinite(safeRowIndex)) return;
+
+  requestAnimationFrame(() => {
+    const card = app.querySelector(
+      `[data-sorting-photo-card="${safeRole}"][data-row-index="${safeRowIndex}"]`
+    );
+    const fallback = app.querySelector(
+      `[data-sorting-photo-input="${orderId}"][data-row-index="${safeRowIndex}"][data-photo-role="${safeRole}"]`
+    )?.closest(".sorting-photo-card, .sorting-photo-editor, .sorting-row");
+    const target = card || fallback;
+    if (!target) return;
+
+    target.scrollIntoView({
+      behavior: "auto",
+      block: "center",
+      inline: "nearest"
+    });
+  });
+}
+
+async function rerenderSortingPhotoUi(orderId, rowIndex, role, renderApp) {
+  if (!rerenderSortingModal(orderId)) {
+    await renderApp();
+  }
+  restoreSortingPhotoPosition(orderId, rowIndex, role);
+}
+
 function setSortingQrScannerStatus(message, tone = "") {
   const status = app.querySelector("[data-sorting-qr-status]");
   if (!status) return;
@@ -1038,6 +1068,12 @@ function markSortingRowsPrinted(orderId, rowIndexes, printedAtIso) {
     row.labelPrintedAt = normalizeSortingPrintedAt(printedAtIso) || new Date().toISOString();
     row.labelPrintCount = normalizeSortingPrintCount(row.labelPrintCount) + 1;
   }
+}
+
+function areAllSortingRowsPrinted(rows) {
+  return Array.isArray(rows)
+    && rows.length > 0
+    && rows.every((row) => normalizeSortingPrintCount(row?.labelPrintCount ?? row?.label_print_count) > 0);
 }
 
 function getSortingOrderFromButton(button) {
@@ -1706,11 +1742,10 @@ export function bindSortingActions(renderApp, helpers) {
         const draft = ensureSortingDraft(orderId);
         if (!draft.rows[rowIndex]) return;
         const nextPhotos = normalizeSortingPhotos(draft.rows[rowIndex].photos);
+        const removedRole = String(nextPhotos[photoIndex]?.role || "").trim() || "issue";
         nextPhotos.splice(photoIndex, 1);
         draft.rows[rowIndex].photos = nextPhotos;
-        if (!rerenderSortingModal(orderId)) {
-          await renderApp();
-        }
+        await rerenderSortingPhotoUi(orderId, rowIndex, removedRole, renderApp);
         return;
       }
 
@@ -1778,6 +1813,11 @@ export function bindSortingActions(renderApp, helpers) {
           await renderApp();
           return;
         }
+        if (!areAllSortingRowsPrinted(draft.rows)) {
+          setNotice("warn", "Print every route sheet before saving.");
+          await renderApp();
+          return;
+        }
         if (state.submittingUpdateOrderId === orderId) return;
 
         state.submittingUpdateOrderId = orderId;
@@ -1818,6 +1858,11 @@ export function bindSortingActions(renderApp, helpers) {
         const hasEmptyRows = draft.rows.some((row) => getSortingRowItemsTotal(row) <= 0);
         if (hasEmptyRows) {
           setNotice("warn", "Fill item counts in all route sheets before starting sorting.");
+          await renderApp();
+          return;
+        }
+        if (!areAllSortingRowsPrinted(draft.rows)) {
+          setNotice("warn", "Print every route sheet before finishing sorting.");
           await renderApp();
           return;
         }
@@ -1890,9 +1935,7 @@ export function bindSortingActions(renderApp, helpers) {
           setNotice("error", error.message);
         }
         photoInput.value = "";
-        if (!rerenderSortingModal(orderId)) {
-          await renderApp();
-        }
+        await rerenderSortingPhotoUi(orderId, rowIndex, role, renderApp);
         return;
       }
 

@@ -189,6 +189,19 @@ function createPostgresOrderQueryRepository(queryable) {
           WHERE b.order_id = o.id
         ) AS basket_count,
         (
+          SELECT COALESCE(json_agg(json_build_object(
+            'id', b.id,
+            'basket_code', b.basket_code,
+            'basket_type', b.basket_type,
+            'basket_kind', COALESCE(b.basket_kind, 'main'),
+            'station', b.station,
+            'status', b.status,
+            'qr_code', b.qr_code
+          ) ORDER BY b.id), '[]'::json)
+          FROM baskets b
+          WHERE b.order_id = o.id
+        ) AS route_sheets_json,
+        (
           SELECT COUNT(*)::int
           FROM baskets b
           WHERE b.order_id = o.id AND COALESCE(b.basket_kind, 'main') = 'rework'

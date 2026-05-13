@@ -83,7 +83,7 @@ function validatePlacementPayload(payload) {
   for (let index = 0; index < payload.placements.length; index += 1) {
     const row = payload.placements[index];
     if (!row.locationQr) {
-      return "Scan LOC for this order.";
+      return "Scan a storage location for this order.";
     }
   }
   return "";
@@ -231,8 +231,8 @@ export function bindPickupActions(renderApp) {
       if (field !== "locationQr") return;
 
       const scannedValue = await openQcQrScanner({
-        title: "LOC scanning",
-        subtitle: "Point the camera at LOC storage QR"
+        title: "Storage location scanning",
+        subtitle: "Point the camera at the storage location QR"
       });
       if (!scannedValue) return;
 
@@ -277,7 +277,7 @@ export function bindPickupActions(renderApp) {
         });
         state.activePickupOrderId = null;
         resetPlacementDraft();
-        setNotice("ok", result.message || "Placement saved.");
+        setNotice("ok", result.message || "Storage location assigned.");
       } catch (error) {
         setPlacementFeedback("error", error.message);
       } finally {

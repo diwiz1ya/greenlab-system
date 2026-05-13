@@ -213,7 +213,7 @@ async function renderApp() {
 }
 
 function syncModalBodyClass() {
-  const hasModal = Boolean(app.querySelector(".sorting-modal, .qc-modal, .order-modal, .manager-sync-modal, .manager-quick-modal, .manager-history-modal, .manager-action-modal, .manager-ready-order-modal, .qc-transfer-drawer, .pickup-placement-modal"));
+  const hasModal = Boolean(app.querySelector(".sorting-modal, .qc-modal, .order-modal, .manager-sync-modal, .manager-flow-modal, .manager-quick-modal, .manager-history-modal, .manager-action-modal, .manager-ready-order-modal, .qc-transfer-drawer, .pickup-placement-modal"));
   document.body.classList.toggle("modal-open", hasModal);
 }
 
@@ -272,7 +272,7 @@ function renderScreenContent({ stations, overview, stationData, pickupWorkbench,
     : {
         orderId: null,
         containerCount: 1,
-        placements: [{ binQr: "", locationQr: "" }, { binQr: "", locationQr: "" }],
+        placements: [{ locationQr: "" }],
         feedback: null
       };
   const placementOrderId = Number(placementDraft.orderId || 0);
@@ -281,8 +281,7 @@ function renderScreenContent({ stations, overview, stationData, pickupWorkbench,
       orderId: null,
       containerCount: 1,
       placements: [
-        { binQr: "", locationQr: "" },
-        { binQr: "", locationQr: "" }
+        { locationQr: "" }
       ],
       feedback: null
     };
@@ -295,7 +294,8 @@ function renderScreenContent({ stations, overview, stationData, pickupWorkbench,
       ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.text)}</div>` : ""}
       ${renderManagerOverviewCompact(overview.orders, syncQueue.summary, state.managerFilter, {
         quickView: state.managerQuickView,
-        quickViewAnchorY: state.managerQuickViewAnchorY
+        quickViewAnchorY: state.managerQuickViewAnchorY,
+        flowStage: state.managerFlowStage
       })}
       ${renderManagerHistoryModal(overview.orders, {
         open: state.managerHistoryModalOpen,
