@@ -38,7 +38,7 @@ npm start
 - `drying` / `demo123`
 - `ironing` / `demo123`
 - `pickup` / `demo123`
-- `rework` / `demo123`
+- `dispatch` / `demo123`
 - `manager` / `demo123`
 
 ## Интеграция CleanCloud (опционально)
