@@ -4,7 +4,7 @@
 
 Что уже реализовано:
 - вход по ролям и доступ по станциям (RBAC)
-- интерфейс по ролям: sorting / washing / drying / QC / rework / ironing / pickup / manager
+- интерфейс по ролям: sorting / washing / drying / QC / rework / ironing / dispatch / manager
 - сортировка с корзинами, составом вещей и фото
 - поток сканирования: sorting -> washing -> drying -> QC/rework -> ironing -> pickup
 - машинные циклы для washing/drying
